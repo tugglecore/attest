@@ -1,0 +1,2 @@
+Checks: 'performance*,modernize*,bugprone*,clang-analyzer*,concurrency*,readability*,-readability-function-cognitive-complexity,-readability-identifier-length,-readability-magic-numbers,-modernize-macro-to-enum,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-concurrency-mt-unsafe'
+WarningsAsErrors: 'performance*,modernize*,bugprone*,clang-analyzer*,concurrency*,readability*,-readability-function-cognitive-complexity,-readability-identifier-length,-readability-magic-numbers,-concurrency-mt-unsafe'
