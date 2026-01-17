@@ -50,7 +50,7 @@ The options may appear in any order. You pass the options as arguments prefixed 
 
 **Example:**
 ```
-TEST(hit_api, attempts = 10) {
+TEST(hit_api, .attempts = 10) {
     int result = handle_api_request();
     EXPECT_EQ(result, 200);
 }
@@ -284,6 +284,20 @@ PARAM_TEST_CTX(basket_case,
 
 ## Expectations
 Attest only provide expectations. Expectations don't stop the test, attest execute their arguments exactly once and tests can have more than one.
+
+For each expectation, you can pass additional argumentst that will be used to print a formatted messaged.
+
+**Example:**
+```
+TEST(hit_api, .attempts = 10) {
+    int expected_status = 200;
+
+    int result = handle_api_request();
+
+    EXPECT_EQ(result, expected_status, "Should return %d, but got %d", expected_status, result);
+}
+```
+
 - `EXPECT_`: Records a failure but continues the test execution.
 
 **List of Expectation:**
