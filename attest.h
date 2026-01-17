@@ -683,6 +683,7 @@ int main(void)
                 .param_index = i,                                       \
                 __VA_ARGS__                                             \
             };                                                          \
+            global_param_context.case_data = (void*)&name##_data[i];    \
             attester(param_cfg);                                        \
         }                                                               \
     }                                                                   \
@@ -728,6 +729,7 @@ int main(void)
                 .param_index = i,                                           \
                 __VA_ARGS__                                                 \
             };                                                              \
+            global_param_context.case_data = (void*)&name##_data[i];        \
             attester(param_cfg);                                            \
         }                                                                   \
     }                                                                       \
