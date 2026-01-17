@@ -262,7 +262,7 @@ PARAM_TEST_CTX(basket_case,
 
 **Parameters:**
 - `name`: Unique name for the parameterized test. No spaces or quotes.
-- `context`: Has type `Context` and allows sharing allocated data.
+- `param_context`: Has type `ParamContext` and allows sharing allocated data.
 
 **Options:**
 Accept all the options available to `PARAM_TEST`.
@@ -272,7 +272,7 @@ Accept all the options available to `PARAM_TEST`.
 #include "attest.h"
 
 PARAM_TEST_CTX(basket_case,
-    context,
+    param_context,
     int,
     num,
     VALS(int, 1, 2, 3))

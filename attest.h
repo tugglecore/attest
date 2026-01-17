@@ -54,6 +54,7 @@ typedef struct
 {
     void* shared;
     void* set;
+    void* case_data;
     void* local;
 } ParamContext;
 
@@ -490,6 +491,12 @@ bool has_missing_tests()
 void parameterize_test(TestConfig* test_config)
 {
     test_config->param_init();
+
+    if (parameterize_test_instance_count == 0) {
+        fprintf(stderr, "%s[ATTEST ERROR] Use macro `VALS` when using `PARAM_TEST` or `PARAM_TEST_CTX`.%s\n", RED, NORMAL);
+        exit(1); // NOLINT
+    }
+
     printf(
         "%s[PARAMETERIZE]%s %s%s%s\n",
         MAGENTA, NORMAL, BOLD_WHITE,
@@ -507,7 +514,7 @@ void parameterize_test(TestConfig* test_config)
     total_tests++;
 
     // TODO: Add count of how many failed/empty instances they are
-    // Currently parameter tests show which instance has failed 
+    // Currently parameter tests show which instance has failed
     // and that's it. We need to show total instances and pass/fail
     // count for entire parameterize test.
     if (has_failed_tests()) {
@@ -696,52 +703,59 @@ int main(void)
     }                                                                            \
     void name##_impl(param_type param_var)
 
-#define PARAM_TEST_CTX(name, context, param_type, param_var, ...)                \
-    void name##_impl(ParamContext* context, param_type param_var);               \
-    void name##_impl_wrapper(TestConfig cfg);                                    \
-                                                                                 \
-    void name##_init(void)                                                       \
-    {                                                                            \
-        TestConfig cfg = { __VA_ARGS__ };                                        \
-        parameterize_test_instance_count = cfg.count;                            \
-        parameterize_before_all_cases = cfg.before_all_cases;                    \
-        parameterize_after_all_cases = cfg.after_all_cases;                      \
-    }                                                                            \
-    void name##_runner(void)                                                     \
-    {                                                                            \
-        TestConfig cfg = { __VA_ARGS__ };                                        \
-        for (int i = 0; i < cfg.count; i++) {                                    \
-            TestConfig param_cfg = {                                             \
-                .filename = __FILE__,                                            \
-                .line = __LINE__,                                                \
-                .test_title = #name,                                             \
-                .param_test = name##_impl_wrapper,                               \
-                .param_index = i,                                                \
-                __VA_ARGS__                                                      \
-            };                                                                   \
-            attester(param_cfg);                                                 \
-        }                                                                        \
-    }                                                                            \
-    static void __attribute__((constructor)) register_##name##_runner(void)      \
-    {                                                                            \
-        static TestConfig test_config = {                                        \
-            .test_title = #name,                                                 \
-            .param_test_runner = name##_runner,                                  \
-            .param_init = name##_init,                                           \
-        };                                                                       \
-        attest_update_registry(&test_config);                                    \
-    }                                                                            \
-    void name##_impl_wrapper(TestConfig cfg)                                     \
-    {                                                                            \
-        char* ptr = (char*)cfg.values_ptr;                                       \
-        param_type* param = (param_type*)(ptr + (cfg.param_index * cfg.stride)); \
-        name##_impl(&global_param_context, *param);                              \
-    }                                                                            \
+#define PARAM_TEST_CTX(name, context, param_type, param_var, ...)                    \
+    void name##_impl(ParamContext* context, param_type param_var);                   \
+    void name##_impl_wrapper(TestConfig cfg);                                        \
+                                                                                     \
+    void name##_init(void)                                                           \
+    {                                                                                \
+        TestConfig cfg = { __VA_ARGS__ };                                            \
+        parameterize_test_instance_count = cfg.count;                                \
+        parameterize_before_all_cases = cfg.before_all_cases;                        \
+        parameterize_after_all_cases = cfg.after_all_cases;                          \
+    }                                                                                \
+    void name##_runner(void)                                                         \
+    {                                                                                \
+        TestConfig cfg = { __VA_ARGS__ };                                            \
+        for (int i = 0; i < cfg.count; i++) {                                        \
+            TestConfig param_cfg = {                                                 \
+                .filename = __FILE__,                                                \
+                .line = __LINE__,                                                    \
+                .test_title = #name,                                                 \
+                .param_test = name##_impl_wrapper,                                   \
+                .param_index = i,                                                    \
+                __VA_ARGS__                                                          \
+            };                                                                       \
+            char* ptr = (char*)cfg.values_ptr;                                       \
+            param_type* param = (param_type*)(ptr + (cfg.param_index * cfg.stride)); \
+            global_param_context.case_data = (void*)param;                           \
+            attester(param_cfg);                                                     \
+            global_param_context.case_data = NULL;                                   \
+        }                                                                            \
+    }                                                                                \
+    static void __attribute__((constructor)) register_##name##_runner(void)          \
+    {                                                                                \
+        static TestConfig test_config = {                                            \
+            .test_title = #name,                                                     \
+            .param_test_runner = name##_runner,                                      \
+            .param_init = name##_init,                                               \
+        };                                                                           \
+        attest_update_registry(&test_config);                                        \
+    }                                                                                \
+    void name##_impl_wrapper(TestConfig cfg)                                         \
+    {                                                                                \
+        char* ptr = (char*)cfg.values_ptr;                                           \
+        param_type* param = (param_type*)(ptr + (cfg.param_index * cfg.stride));     \
+        name##_impl(&global_param_context, *param);                                  \
+    }                                                                                \
     void name##_impl(ParamContext* context, param_type param_var)
 
 /**************************
  * EXPECTATIONS
  *************************/
+// TODO: We are voiding the return values of `sn?printf` to silence
+// the warning from clang-tidy check `cert-err3-c`. Decide if it is
+// worth the increase in macro compelxity to properly handle result.
 #define PICK_ONE(x, ...) x
 
 #define COUNT_ARG(                          \
@@ -765,15 +779,15 @@ int main(void)
 
 #define IGNORE_MESSAGE(...)
 
-#define SAVE_MESSAGE(...)                                              \
-    size_t msg_size = snprintf(NULL, 0, __VA_ARGS__);                  \
-    if (msg_size > 0) {                                                \
-        failure_info.has_msg = true;                                   \
-        if (msg_size < ATTEST_VALUE_BUF) {                             \
-            snprintf(failure_info.msg, ATTEST_VALUE_BUF, __VA_ARGS__); \
-        } else {                                                       \
-            sprintf(failure_info.msg, "(truncated)");                  \
-        }                                                              \
+#define SAVE_MESSAGE(...)                                                    \
+    size_t msg_size = snprintf(NULL, 0, __VA_ARGS__);                        \
+    if (msg_size > 0) {                                                      \
+        failure_info.has_msg = true;                                         \
+        if (msg_size < ATTEST_VALUE_BUF) {                                   \
+            (void)snprintf(failure_info.msg, ATTEST_VALUE_BUF, __VA_ARGS__); \
+        } else {                                                             \
+            (void)sprintf(failure_info.msg, "(truncated)");                  \
+        }                                                                    \
     }
 
 #define TAKE_ONE(x, ...) __VA_ARGS__
@@ -787,17 +801,17 @@ int main(void)
 
 #define BUILD_RELATION(operator, x, y, ...) x operator y
 
-#define DISPLAY_VALUES(...)                                      \
-    failure_info.has_display = true;                             \
-    size_t display_size = snprintf(NULL, 0, __VA_ARGS__);        \
-    if (display_size > 0) {                                      \
-        if (display_size < ATTEST_VALUE_BUF) {                   \
-            snprintf(failure_info.values_display,                \
-                ATTEST_VALUE_BUF,                                \
-                __VA_ARGS__);                                    \
-        } else {                                                 \
-            sprintf(failure_info.values_display, "(truncated)"); \
-        }                                                        \
+#define DISPLAY_VALUES(...)                                            \
+    failure_info.has_display = true;                                   \
+    size_t display_size = snprintf(NULL, 0, __VA_ARGS__);              \
+    if (display_size > 0) {                                            \
+        if (display_size < ATTEST_VALUE_BUF) {                         \
+            (void)snprintf(failure_info.values_display,                \
+                ATTEST_VALUE_BUF,                                      \
+                __VA_ARGS__);                                          \
+        } else {                                                       \
+            (void)sprintf(failure_info.values_display, "(truncated)"); \
+        }                                                              \
     }
 
 #define IGNORE_DISPLAY
@@ -950,10 +964,10 @@ int main(void)
         value_display;                                                \
         size_t reason_size = snprintf(NULL, 0, __VA_ARGS__);          \
         if (reason_size < ATTEST_VALUE_BUF) {                         \
-            snprintf(failure_info.reason,                             \
+            (void)snprintf(failure_info.reason,                       \
                 ATTEST_VALUE_BUF, __VA_ARGS__);                       \
         } else {                                                      \
-            sprintf(failure_info.reason,                              \
+            (void)sprintf(failure_info.reason,                        \
                 "Expression is false: (truncated)");                  \
         }                                                             \
         report_failure(failure_info);                                 \
@@ -973,6 +987,8 @@ int main(void)
 #define after_all(...) AFTER_ALL(__VA_ARGS__)
 
 #define after_each(...) AFTER_EACH(__VA_ARGS__)
+
+#define param_test(...) PARAM_TEST(__VA_ARGS__)
 
 #define param_test_ctx(...) PARAM_TEST_CTX(__VA_ARGS__)
 
