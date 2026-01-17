@@ -285,7 +285,7 @@ PARAM_TEST_CTX(basket_case,
 ## Expectations
 Attest only provide expectations. Expectations don't stop the test, attest execute their arguments exactly once and tests can have more than one.
 
-For each expectation, you can pass additional argumentst that will be used to print a formatted messaged.
+For each expectation, you can pass it variable amount arguments passed to it and used those arguments to create a formatted message.
 
 **Example:**
 ```
