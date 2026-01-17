@@ -143,7 +143,7 @@ char* empty_test_titles[ATTEST_MAX_TESTS];
 char* empty_group_titles[ATTEST_MAX_TESTS];
 
 Status parameterize_instance_results[ATTEST_MAX_TESTS];
-static int parameterize_test_instance_count = 0;
+static int test_instance_count = 0;
 static void (*parameterize_before_all_cases)(ParamContext* param_ctx);
 static void (*parameterize_after_all_cases)(ParamContext* param_ctx);
 
@@ -470,7 +470,7 @@ void attest_update_registry(TestConfig* test_config)
 
 bool has_status(Status status)
 {
-    for (int i = 0; i < parameterize_test_instance_count; i++) {
+    for (int i = 0; i < test_instance_count; i++) {
         if (parameterize_instance_results[i] == status) {
             return true;
         }
@@ -491,9 +491,8 @@ bool has_missing_tests()
 void parameterize_test(TestConfig* test_config)
 {
     test_config->param_init();
-
-    if (parameterize_test_instance_count == 0) {
-        fprintf(stderr, "%s[ATTEST ERROR] Use macro `VALS` when using `PARAM_TEST` or `PARAM_TEST_CTX`.%s\n", RED, NORMAL);
+    if (test_instance_count == 0) {
+        fprintf(stderr, "%s[ATTEST ERROR] Pass parenthesis enclosed values when using `PARAM_TEST` or `PARAM_TEST_CTX`.%s\n", RED, NORMAL);
         exit(1); // NOLINT
     }
 
@@ -553,7 +552,7 @@ void parameterize_test(TestConfig* test_config)
 
     parameterize_before_all_cases = NULL;
     parameterize_after_all_cases = NULL;
-    parameterize_test_instance_count = 0;
+    test_instance_count = 0;
 }
 
 #ifndef ATTEST_NO_MAIN
@@ -656,98 +655,95 @@ int main(void)
     }                                                                         \
     static void attest_after_each(TestContext*(context))
 
-#define VALS(type, ...)                                       \
-    .values_ptr = (type[]) { __VA_ARGS__ },                   \
-    .count = sizeof((type[]) { __VA_ARGS__ }) / sizeof(type), \
-    .stride = sizeof(type)
+#define UNWRAP(...) __VA_ARGS__
+#define STRIP_PARENS(x) UNWRAP x
 
-#define PARAM_TEST(name, param_type, param_var, ...)                             \
-    void name##_impl(param_type param_var);                                      \
-    void name##_impl_wrapper(TestConfig cfg);                                    \
-                                                                                 \
-    void name##_init(void)                                                       \
-    {                                                                            \
-        TestConfig cfg = { __VA_ARGS__ };                                        \
-        parameterize_test_instance_count = cfg.count;                            \
-        parameterize_before_all_cases = cfg.before_all_cases;                    \
-    }                                                                            \
-    void name##_runner(void)                                                     \
-    {                                                                            \
-        TestConfig cfg = { __VA_ARGS__ };                                        \
-        for (int i = 0; i < cfg.count; i++) {                                    \
-            TestConfig param_cfg = {                                             \
-                .filename = __FILE__,                                            \
-                .line = __LINE__,                                                \
-                .test_title = #name,                                             \
-                .param_test = name##_impl_wrapper,                               \
-                .param_index = i,                                                \
-                __VA_ARGS__                                                      \
-            };                                                                   \
-            attester(param_cfg);                                                 \
-        }                                                                        \
-    }                                                                            \
-    static void __attribute__((constructor)) register_##name##_runner(void)      \
-    {                                                                            \
-        static TestConfig test_config = {                                        \
-            .test_title = #name,                                                 \
-            .param_test_runner = name##_runner,                                  \
-            .param_init = name##_init,                                           \
-        };                                                                       \
-        attest_update_registry(&test_config);                                    \
-    }                                                                            \
-    void name##_impl_wrapper(TestConfig cfg)                                     \
-    {                                                                            \
-        char* ptr = (char*)cfg.values_ptr;                                       \
-        param_type* param = (param_type*)(ptr + (cfg.param_index * cfg.stride)); \
-        name##_impl(*param);                                                     \
-    }                                                                            \
+#define PARAM_TEST(name, param_type, param_var, values_group, ...)      \
+    void name##_impl(param_type param_var);                             \
+    void name##_impl_wrapper(TestConfig cfg);                           \
+    static const param_type name##_data[] = {                           \
+        STRIP_PARENS(values_group)                                      \
+    };                                                                  \
+                                                                        \
+    void name##_init(void)                                              \
+    {                                                                   \
+        TestConfig cfg = { __VA_ARGS__ };                               \
+        test_instance_count = sizeof(name##_data) / sizeof(param_type); \
+        parameterize_before_all_cases = cfg.before_all_cases;           \
+        parameterize_after_all_cases = cfg.after_all_cases;             \
+    }                                                                   \
+    void name##_runner(void)                                            \
+    {                                                                   \
+        for (int i = 0; i < test_instance_count; i++) {                 \
+            TestConfig param_cfg = {                                    \
+                .filename = __FILE__,                                   \
+                .line = __LINE__,                                       \
+                .test_title = #name,                                    \
+                .param_test = name##_impl_wrapper,                      \
+                .param_index = i,                                       \
+                __VA_ARGS__                                             \
+            };                                                          \
+            attester(param_cfg);                                        \
+        }                                                               \
+    }                                                                   \
+    static void __attribute__((constructor))                            \
+    register_##name##_runner(void)                                      \
+    {                                                                   \
+        static TestConfig test_config = {                               \
+            .test_title = #name,                                        \
+            .param_test_runner = name##_runner,                         \
+            .param_init = name##_init,                                  \
+        };                                                              \
+        attest_update_registry(&test_config);                           \
+    }                                                                   \
+    void name##_impl_wrapper(TestConfig cfg)                            \
+    {                                                                   \
+        name##_impl(name##_data[cfg.param_index]);                      \
+    }                                                                   \
     void name##_impl(param_type param_var)
 
-#define PARAM_TEST_CTX(name, context, param_type, param_var, ...)                    \
-    void name##_impl(ParamContext* context, param_type param_var);                   \
-    void name##_impl_wrapper(TestConfig cfg);                                        \
-                                                                                     \
-    void name##_init(void)                                                           \
-    {                                                                                \
-        TestConfig cfg = { __VA_ARGS__ };                                            \
-        parameterize_test_instance_count = cfg.count;                                \
-        parameterize_before_all_cases = cfg.before_all_cases;                        \
-        parameterize_after_all_cases = cfg.after_all_cases;                          \
-    }                                                                                \
-    void name##_runner(void)                                                         \
-    {                                                                                \
-        TestConfig cfg = { __VA_ARGS__ };                                            \
-        for (int i = 0; i < cfg.count; i++) {                                        \
-            TestConfig param_cfg = {                                                 \
-                .filename = __FILE__,                                                \
-                .line = __LINE__,                                                    \
-                .test_title = #name,                                                 \
-                .param_test = name##_impl_wrapper,                                   \
-                .param_index = i,                                                    \
-                __VA_ARGS__                                                          \
-            };                                                                       \
-            char* ptr = (char*)cfg.values_ptr;                                       \
-            param_type* param = (param_type*)(ptr + (cfg.param_index * cfg.stride)); \
-            global_param_context.case_data = (void*)param;                           \
-            attester(param_cfg);                                                     \
-            global_param_context.case_data = NULL;                                   \
-        }                                                                            \
-    }                                                                                \
-    static void __attribute__((constructor)) register_##name##_runner(void)          \
-    {                                                                                \
-        static TestConfig test_config = {                                            \
-            .test_title = #name,                                                     \
-            .param_test_runner = name##_runner,                                      \
-            .param_init = name##_init,                                               \
-        };                                                                           \
-        attest_update_registry(&test_config);                                        \
-    }                                                                                \
-    void name##_impl_wrapper(TestConfig cfg)                                         \
-    {                                                                                \
-        char* ptr = (char*)cfg.values_ptr;                                           \
-        param_type* param = (param_type*)(ptr + (cfg.param_index * cfg.stride));     \
-        name##_impl(&global_param_context, *param);                                  \
-    }                                                                                \
+#define PARAM_TEST_CTX(name,                                                \
+    context, param_type, param_var, values_group, ...)                      \
+    void name##_impl(ParamContext* context, param_type param_var);          \
+    void name##_impl_wrapper(TestConfig cfg);                               \
+    static const param_type name##_data[] = {                               \
+        STRIP_PARENS(values_group)                                          \
+    };                                                                      \
+                                                                            \
+    void name##_init(void)                                                  \
+    {                                                                       \
+        TestConfig cfg = { __VA_ARGS__ };                                   \
+        test_instance_count = sizeof(name##_data) / sizeof(param_type);     \
+        parameterize_before_all_cases = cfg.before_all_cases;               \
+        parameterize_after_all_cases = cfg.after_all_cases;                 \
+    }                                                                       \
+    void name##_runner(void)                                                \
+    {                                                                       \
+        for (int i = 0; i < test_instance_count; i++) {                     \
+            TestConfig param_cfg = {                                        \
+                .filename = __FILE__,                                       \
+                .line = __LINE__,                                           \
+                .test_title = #name,                                        \
+                .param_test = name##_impl_wrapper,                          \
+                .param_index = i,                                           \
+                __VA_ARGS__                                                 \
+            };                                                              \
+            attester(param_cfg);                                            \
+        }                                                                   \
+    }                                                                       \
+    static void __attribute__((constructor)) register_##name##_runner(void) \
+    {                                                                       \
+        static TestConfig test_config = {                                   \
+            .test_title = #name,                                            \
+            .param_test_runner = name##_runner,                             \
+            .param_init = name##_init,                                      \
+        };                                                                  \
+        attest_update_registry(&test_config);                               \
+    }                                                                       \
+    void name##_impl_wrapper(TestConfig cfg)                                \
+    {                                                                       \
+        name##_impl(&global_param_context, name##_data[cfg.param_index]);   \
+    }                                                                       \
     void name##_impl(ParamContext* context, param_type param_var)
 
 /**************************

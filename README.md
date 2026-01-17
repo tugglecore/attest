@@ -194,19 +194,15 @@ AFTER_ALL(test_context)
 
 
 
-### `PARAM_TEST(name, [options...])`
+### `PARAM_TEST(name, case_type, case_name, (values), [options...])`
 
 **Parameters:**
 - `name`: Unique name for the parameterized test. No spaces or quotes.
+- `case_type`: case data type.
+- `case_name`: Name of case data.
+- `values`: a list of values of type `case_type` enclosed in parenthesis.
 
 **Options:**
-Accept all the options available to `TEST` alongside the following:
-
-- `VALS(type,...)`
-
-**Parameters:**
-- `type`: the parameter type passed to each parameterized case.
-- Remaining arguments of values passed to each case.
 
 |Option              |Type                    |Description                 |
 |--------------------|------------------------|----------------------------|
@@ -221,10 +217,10 @@ Accept all the options available to `TEST` alongside the following:
 
 PARAM_TEST(fruit_basket,
     int,
-    num,
-    VALS(int, 1, 2, 3))
+    case_num,
+    (1, 2, 3))
 {
-    EXPECT_EQ(num, 1);
+    EXPECT_EQ(case_num, 1);
 }
 ```
 
@@ -248,21 +244,25 @@ Attest passes a `ParamContext` object to each test case of a parameterized tests
 PARAM_TEST_CTX(basket_case,
     param_context,
     int,
-    num,
-    VALS(int, 1, 2, 3))
+    case_num,
+    int, 1, 2, 3)
 {
     int shared_num = *(int*)param_context->shared;
-    EXPECT_EQ(shared_num, 1);
+    EXPECT_EQ(shared_num, case_num);
 }
 ```
 
 
 
-### `PARAM_TEST_CTX`
+### `PARAM_TEST_CTX(name, param_contest, case_type, case_name, (values), [options...])`
+`
 
 **Parameters:**
 - `name`: Unique name for the parameterized test. No spaces or quotes.
-- `param_context`: Has type `ParamContext` and allows sharing allocated data.
+- `param_context`: Name of `ParamContext`.
+- `case_type`: case data type.
+- `case_name`: Name of case data.
+- `values`: a list of values of type `case_type` enclosed in parenthesis.
 
 **Options:**
 Accept all the options available to `PARAM_TEST`.
@@ -274,11 +274,11 @@ Accept all the options available to `PARAM_TEST`.
 PARAM_TEST_CTX(basket_case,
     param_context,
     int,
-    num,
-    VALS(int, 1, 2, 3))
+    case_num,
+    (1, 2, 3))
 {
-    int shared_num = *(int*)context->shared;
-    EXPECT_EQ(shared_num, 1);
+    int global_num = *(int*)context->shared;
+    EXPECT_EQ(global_num, case_num);
 }
 ```
 

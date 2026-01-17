@@ -10,7 +10,7 @@ BEFORE_ALL(ctx)
 PARAM_TEST(fruit_basket,
     int,
     num,
-    VALS(int, 1, 2, 3))
+    (1, 2, 3))
 {
     EXPECT_EQ(num, 1);
 }
@@ -43,11 +43,11 @@ PARAM_TEST_CTX(basket_case,
     context,
     int,
     num,
+    (1, 2, 3),
     .before_all_cases = before_all_cases,
     .before_each_case = before_each_case,
     .after_all_cases = after_all_cases,
-    .after_each_case = after_each_case,
-    VALS(int, 1, 2, 3))
+    .after_each_case = after_each_case, )
 {
     int shared_num = *(int*)context->shared;
     int set_num = *(int*)context->set;
