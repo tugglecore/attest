@@ -220,6 +220,9 @@ void attester(TestConfig cfg)
             NORMAL);
     }
 
+     if (!cfg.param_test) {
+        total_tests++;
+     }
     for (
         cfg.attempt_count = 0;
         cfg.attempt_count < max_attempts;
@@ -254,13 +257,11 @@ void attester(TestConfig cfg)
 
         if (cfg.contextual_test) {
             cfg.contextual_test(&context);
-            total_tests++;
         } else if (cfg.simple_test) {
             cfg.simple_test();
-            total_tests++;
         } else if (cfg.param_test) {
             printf(
-                "%s  [INSTANCE %d] %s",
+                "%s [INSTANCE %d ] %s",
                 GRAY,
                 attest_internal_current_test->param_index + 1,
                 NORMAL);
@@ -491,6 +492,7 @@ bool has_missing_tests()
 void parameterize_test(TestConfig* test_config)
 {
     test_config->param_init();
+    
     if (test_instance_count == 0) {
         fprintf(stderr, "%s[ATTEST ERROR] Pass parenthesis enclosed values when using `PARAM_TEST` or `PARAM_TEST_CTX`.%s\n", RED, NORMAL);
         exit(1); // NOLINT
@@ -536,8 +538,8 @@ void parameterize_test(TestConfig* test_config)
     } else {
         pass_count++;
         printf(
-            "%s[PASSED] %s%s\n",
-            MAGENTA,
+            "%s[   PASSED   ] %s%s\n",
+            GREEN,
             test_config->test_title,
             NORMAL);
     }
@@ -836,14 +838,14 @@ int main(void)
         BUILD_RELATION(==, __VA_ARGS__),        \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
         DISPLAY_RELATION(==, __VA_ARGS__),      \
-        BUILD_RELATION_REASON(==, __VA_ARGS__))
+        BUILD_RELATION_REASON(!==, __VA_ARGS__))
 
 #define EXPECT_NEQ(...)                         \
     ATTEST_EXPECT_ENGINE(                       \
         BUILD_RELATION(!=, __VA_ARGS__),        \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
         DISPLAY_RELATION(!=, __VA_ARGS__),      \
-        BUILD_RELATION_REASON(!=, __VA_ARGS__))
+        BUILD_RELATION_REASON(==, __VA_ARGS__))
 
 #define EXPECT_GT(...)                          \
     ATTEST_EXPECT_ENGINE(                       \
@@ -890,6 +892,23 @@ int main(void)
         !(COMPARE_STRINGS(__VA_ARGS__)),        \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
         DISPLAY_STRING(__VA_ARGS__),            \
+        BUILD_RELATION_REASON(==, __VA_ARGS__))
+
+#define DISPLAY_CHARS(op, x, y, ...) \
+    DISPLAY_VALUES("%c %s %c", (x), #op, (y))
+
+#define EXPECT_SAME_CHAR(...)                 \
+    ATTEST_EXPECT_ENGINE(                       \
+        BUILD_RELATION(==, __VA_ARGS__),           \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
+        DISPLAY_CHARS(==, __VA_ARGS__),      \
+        BUILD_RELATION_REASON(!=, __VA_ARGS__))
+
+#define EXPECT_DIFF_CHAR(...)                 \
+    ATTEST_EXPECT_ENGINE(                       \
+        !(BUILD_RELATION(==, __VA_ARGS__)),           \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
+        DISPLAY_CHARS(!=, __VA_ARGS__),      \
         BUILD_RELATION_REASON(==, __VA_ARGS__))
 
 #define IS_NULL(ptr, ...) ptr == NULL
@@ -1009,6 +1028,10 @@ int main(void)
 #define expect_same_string(...) EXPECT_SAME_STRING(__VA_ARGS__)
 
 #define expect_diff_string(...) EXPECT_DIFF_STRING(__VA_ARGS__)
+
+#define expect_same_char(...) EXPECT_SAME_CHAR(__VA_ARGS__)
+
+#define expect_diff_char(...) EXPECT_DIFF_CHAR(__VA_ARGS__)
 
 #define expect_null(...) EXPECT_NULL(__VA_ARGS__)
 

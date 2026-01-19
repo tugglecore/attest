@@ -10,7 +10,7 @@ Single header, C99 compatible, cross-platform testing runner.
  - Configurable test behavior
 
 ## Basic usage
-```
+```C
 #include "attest.h"
 
 TEST(basic_math) {

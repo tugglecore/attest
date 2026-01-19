@@ -12,3 +12,4 @@
  - register a callback to be called after all tests with a detailed test summary
  - accept CLI argument `filter=pattern` to select which tests will run 
  - Suppport compiling MSVC. Currently, compiling with MSVC fails with errors related to our usage of GCC/Clang attributes.
+ - Provide log function in order provide a better test logging experince
