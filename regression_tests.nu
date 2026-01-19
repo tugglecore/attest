@@ -72,7 +72,7 @@ def test_basics [] {
             msg: $"    -> wrong header."
         },
         {
-            condition: (confirm_total $stdout 7),
+            condition: (confirm_total $stdout 5),
             msg: $"    -> wrong amount of total test."
         },
         {

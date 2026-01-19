@@ -14,6 +14,11 @@
 #ifndef ATTEST_MAX_TESTS
 #define ATTEST_MAX_TESTS 128
 #endif
+//
+// Default max failures for a parameterize test
+#ifndef ATTEST_MAX_PARAMERTERIZE_RESULTS
+#define ATTEST_MAX_PARAMERTERIZE_RESULTS 32
+#endif
 
 // Max buffer size to represent values
 #ifndef ATTEST_VALUE_BUF
@@ -119,6 +124,14 @@ typedef struct
 
 typedef struct
 {
+    Status status;
+    int failure_count;
+    FailureInfo failures[ATTEST_MAX_PARAMERTERIZE_RESULTS];
+    bool has_status;
+} InstanceResult;
+
+typedef struct
+{
     void* shared;
 } GlobalContext;
 
@@ -135,6 +148,9 @@ int pass_count = 0;
 int fail_count = 0;
 int skip_count = 0;
 int empty_count = 0;
+static int test_instance_count = 0;
+
+static TestConfig* attest_registry_head = NULL;
 
 char* failed_test_titles[ATTEST_MAX_TESTS];
 char* failed_group_titles[ATTEST_MAX_TESTS];
@@ -142,8 +158,7 @@ char* failed_group_titles[ATTEST_MAX_TESTS];
 char* empty_test_titles[ATTEST_MAX_TESTS];
 char* empty_group_titles[ATTEST_MAX_TESTS];
 
-Status parameterize_instance_results[ATTEST_MAX_TESTS];
-static int test_instance_count = 0;
+InstanceResult parameterize_instance_results[ATTEST_MAX_TESTS];
 static void (*parameterize_before_all_cases)(ParamContext* param_ctx);
 static void (*parameterize_after_all_cases)(ParamContext* param_ctx);
 
@@ -165,7 +180,7 @@ static ParamContext global_param_context = {
 };
 
 /**************************
- * PROCEDURES
+ * RUNNER
  *************************/
 
 bool is_duplicate_title(char* subject)
@@ -220,9 +235,9 @@ void attester(TestConfig cfg)
             NORMAL);
     }
 
-     if (!cfg.param_test) {
+    if (!cfg.param_test) {
         total_tests++;
-     }
+    }
     for (
         cfg.attempt_count = 0;
         cfg.attempt_count < max_attempts;
@@ -260,12 +275,6 @@ void attester(TestConfig cfg)
         } else if (cfg.simple_test) {
             cfg.simple_test();
         } else if (cfg.param_test) {
-            printf(
-                "%s [INSTANCE %d ] %s",
-                GRAY,
-                attest_internal_current_test->param_index + 1,
-                NORMAL);
-
             cfg.param_test(cfg);
         } else {
             (void)fprintf(stderr, "%s[ERROR] Attest entered invalid state. capture debug logs and file issue.%s\n", RED, NORMAL);
@@ -318,14 +327,11 @@ void attester(TestConfig cfg)
         break;
     case MISSING_EXPECTATION:
         if (cfg.param_test) {
-            parameterize_instance_results[cfg.param_index] = MISSING_EXPECTATION;
-            printf(
-                "%sMissing Assertion%s\n",
-                CYAN,
-                NORMAL);
+            InstanceResult instance_result = { .status = MISSING_EXPECTATION };
+            parameterize_instance_results[cfg.param_index] = instance_result;
         } else {
             printf(
-                "%s[Missing Assertion]%s %s%s%s\n",
+                "%s[MISSING ASSERTION]%s %s%s%s\n",
                 MAGENTA,
                 NORMAL,
                 BOLD_WHITE,
@@ -339,9 +345,31 @@ void attester(TestConfig cfg)
         }
         break;
     default:
-        printf("ATTEST ERROR. print debug logs and file issue");
+        fprintf(stderr, "%s[ATTEST ERROR] Reach unreachable state. Print debug logs and file issue%s\n", RED, NORMAL);
     }
 }
+
+void attest_update_registry(TestConfig* test_config)
+{
+    if (attest_registry_head == NULL) {
+        test_config->next = NULL;
+        attest_registry_head = test_config;
+        return;
+    }
+
+    TestConfig* pointer = attest_registry_head;
+
+    while (pointer->next != NULL) {
+        pointer = pointer->next;
+    }
+
+    pointer->next = test_config;
+    test_config->next = NULL;
+}
+
+/**************************
+ * REPORTERS
+ *************************/
 
 void report_success()
 {
@@ -357,13 +385,11 @@ void report_success()
             NORMAL,
             GREEN,
             NORMAL);
-    } else if (current_test->param_test) {
-        parameterize_instance_results[current_test->param_index] = PASSED;
-
-        printf(
-            "%s Passed%s\n",
-            GREEN,
-            NORMAL);
+    } else if (current_test->param_test && !parameterize_instance_results[current_test->param_index].has_status) {
+        InstanceResult instance_result = { .has_status = true, .status = PASSED };
+        instance_result.has_status = true;
+        instance_result.status = PASSED;
+        parameterize_instance_results[current_test->param_index] = instance_result;
     }
 }
 
@@ -419,19 +445,158 @@ void report_failure(FailureInfo failure_info)
     attest_internal_current_test->status = FAILED;
 
     if (attest_internal_current_test->param_test) {
-        parameterize_instance_results[attest_internal_current_test->param_index] = FAILED;
-    }
-
-    if (attest_internal_current_test->param_test) {
-        printf(
-            "%s Failed \n%s",
-            RED,
-            NORMAL);
+        // InstanceResult instance_result = { .has_status = true, .status = PASSED };
+        // InstanceResult instance_result = parameterize_instance_results[attest_internal_current_test->param_index];
+        parameterize_instance_results[attest_internal_current_test->param_index].has_status = true;
+        parameterize_instance_results[attest_internal_current_test->param_index].status = FAILED;
+        parameterize_instance_results[attest_internal_current_test->param_index].failures[parameterize_instance_results[attest_internal_current_test->param_index].failure_count] = failure_info;
+        parameterize_instance_results[attest_internal_current_test->param_index].failure_count++;
     } else if (attest_internal_current_test->attempts == 0) {
         report_failed_expectation(failure_info);
     } else {
         report_failed_attempt(failure_info);
     }
+}
+
+bool any_instance(Status status)
+{
+    for (int i = 0; i < test_instance_count; i++) {
+        if (parameterize_instance_results[i].status == status) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool every_instance(Status status)
+{
+    for (int i = 0; i < test_instance_count; i++) {
+        if (parameterize_instance_results[i].status != status) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void parameterize_test(TestConfig* test_config)
+{
+    test_config->param_init();
+
+    if (test_instance_count == 0) {
+        fprintf(stderr, "%s[ATTEST ERROR] Pass values enclosed with parenthesis when using `PARAM_TEST` or `PARAM_TEST_CTX`.%s\n", RED, NORMAL);
+        exit(1); // NOLINT
+    }
+
+    global_param_context.shared = attest_context.global_shared_data;
+
+    if (parameterize_before_all_cases != NULL) {
+        parameterize_before_all_cases(&global_param_context);
+    }
+
+    test_config->param_test_runner();
+
+    total_tests++;
+
+    bool empty_tests_are_present = any_instance(MISSING_EXPECTATION);
+
+    bool every_instance_pass = every_instance(PASSED);
+
+    if (every_instance_pass) {
+        pass_count++;
+    } else if (empty_tests_are_present) {
+        empty_count++;
+        printf(
+            "%s[MISSING ASSERTION]%s %s%s%s\n",
+            MAGENTA,
+            NORMAL,
+            BOLD_WHITE, test_config->test_title, NORMAL);
+        printf(
+            "%s NOTE:%s Every case of a pareametize test must have atleast one expectation.\n",
+            CYAN, NORMAL);
+        printf("%s Location:%s %s%s:%d%s\n\n",
+            CYAN, NORMAL, GRAY, test_config->filename,
+            test_config->line, NORMAL);
+    } else {
+        failed_test_titles[fail_count] = test_config->test_title;
+        fail_count++;
+        printf(
+            "%s[PARAMETERIZE]%s %s%s%s\n",
+            MAGENTA, NORMAL, BOLD_WHITE,
+            test_config->test_title,
+            NORMAL);
+
+        for (int i = 0; i < test_instance_count; i++) {
+            InstanceResult instance_result = parameterize_instance_results[i];
+            printf(
+                "%s [INSTANCE %d ] %s",
+                GRAY,
+                i + 1,
+                NORMAL);
+
+            switch (parameterize_instance_results[i].status) {
+            case PASSED:
+                printf("%sPASSED%s\n", GREEN, NORMAL);
+                break;
+            case MISSING_EXPECTATION:
+                fprintf(
+                    stderr,
+                    "%s[ATTEST ERROR] Reach unreachable state. Print debug logs and file issue.%s\n",
+                    RED,
+                    NORMAL);
+                break;
+            case FAILED:
+                printf("%sFAILED%s\n", RED, NORMAL);
+                printf(
+                    "%s  Reasons:%s\n",
+                    RED,
+                    NORMAL);
+                for (int j = 0; j < instance_result.failure_count; j++) {
+                    FailureInfo instance_failure_info = instance_result.failures[j];
+                    printf(
+                        "  - Expected %s%s%s but %s%s%s\n",
+                        GREEN, instance_failure_info.values_display, NORMAL, RED, instance_failure_info.reason,
+                        NORMAL);
+                }
+                break;
+            default:
+                fprintf(
+                    stderr,
+                    "%s[ATTEST ERROR] Reach unreachable state. Print debug logs and file issue.%s\n",
+                    RED,
+                    NORMAL);
+                break;
+            }
+        }
+
+        int amount_of_passed_cases = 0;
+
+        for (int i = 0; i < test_instance_count; i++) {
+            if (parameterize_instance_results[i].status == PASSED) {
+                amount_of_passed_cases++;
+            }
+        }
+
+        printf(
+            "%s[FAILED]%s %s%s%s - %d/%d passed\n\n",
+            RED, NORMAL, BOLD_WHITE,
+            test_config->test_title,
+            NORMAL,
+            amount_of_passed_cases, test_instance_count);
+    }
+
+    if (parameterize_after_all_cases != NULL) {
+        parameterize_after_all_cases(&global_param_context);
+    }
+
+    global_param_context.shared = NULL;
+    global_param_context.set = NULL;
+    global_param_context.local = NULL;
+
+    parameterize_before_all_cases = NULL;
+    parameterize_after_all_cases = NULL;
+    test_instance_count = 0;
+
+    memset(parameterize_instance_results, 0, sizeof(InstanceResult) * ATTEST_MAX_TESTS);
 }
 
 void report_summary()
@@ -449,115 +614,10 @@ void report_summary()
     exit(fail_count || empty_count ? 1 : 0); // NOLINT
 }
 
-static TestConfig* attest_registry_head = NULL;
+/**************************
+ * REPORTERS
+ *************************/
 
-void attest_update_registry(TestConfig* test_config)
-{
-    if (attest_registry_head == NULL) {
-        test_config->next = NULL;
-        attest_registry_head = test_config;
-        return;
-    }
-
-    TestConfig* pointer = attest_registry_head;
-
-    while (pointer->next != NULL) {
-        pointer = pointer->next;
-    }
-
-    pointer->next = test_config;
-    test_config->next = NULL;
-}
-
-bool has_status(Status status)
-{
-    for (int i = 0; i < test_instance_count; i++) {
-        if (parameterize_instance_results[i] == status) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool has_failed_tests()
-{
-    return has_status(FAILED);
-}
-
-bool has_missing_tests()
-{
-    return has_status(MISSING_EXPECTATION);
-}
-
-void parameterize_test(TestConfig* test_config)
-{
-    test_config->param_init();
-    
-    if (test_instance_count == 0) {
-        fprintf(stderr, "%s[ATTEST ERROR] Pass parenthesis enclosed values when using `PARAM_TEST` or `PARAM_TEST_CTX`.%s\n", RED, NORMAL);
-        exit(1); // NOLINT
-    }
-
-    printf(
-        "%s[PARAMETERIZE]%s %s%s%s\n",
-        MAGENTA, NORMAL, BOLD_WHITE,
-        test_config->test_title,
-        NORMAL);
-
-    global_param_context.shared = attest_context.global_shared_data;
-
-    if (parameterize_before_all_cases != NULL) {
-        parameterize_before_all_cases(&global_param_context);
-    }
-
-    test_config->param_test_runner();
-
-    total_tests++;
-
-    // TODO: Add count of how many failed/empty instances they are
-    // Currently parameter tests show which instance has failed
-    // and that's it. We need to show total instances and pass/fail
-    // count for entire parameterize test.
-    if (has_failed_tests()) {
-        failed_test_titles[fail_count] = test_config->test_title;
-        fail_count++;
-
-        printf(
-            "%s[FAILED]%s %s%s%s\n",
-            RED, NORMAL, BOLD_WHITE,
-            test_config->test_title,
-            NORMAL);
-    } else if (has_missing_tests()) {
-        empty_test_titles[empty_count] = test_config->test_title;
-        empty_count++;
-        printf(
-            "%s[MISSING ASSERTION] %s%s\n",
-            CYAN,
-            test_config->test_title,
-            NORMAL);
-    } else {
-        pass_count++;
-        printf(
-            "%s[   PASSED   ] %s%s\n",
-            GREEN,
-            test_config->test_title,
-            NORMAL);
-    }
-
-    if (parameterize_after_all_cases != NULL) {
-        parameterize_after_all_cases(&global_param_context);
-    }
-
-    global_param_context.shared = NULL;
-    global_param_context.set = NULL;
-    global_param_context.local = NULL;
-
-    parameterize_before_all_cases = NULL;
-    parameterize_after_all_cases = NULL;
-    test_instance_count = 0;
-}
-
-#ifndef ATTEST_NO_MAIN
 int main(void)
 {
     GlobalContext global_context = { .shared = NULL };
@@ -590,7 +650,10 @@ int main(void)
 
     return 0;
 }
-#endif
+
+/**************************
+ * MACROS
+ *************************/
 
 #define TAGS(...) .tags = { __VA_ARGS__, NULL }
 
@@ -693,6 +756,8 @@ int main(void)
     register_##name##_runner(void)                                      \
     {                                                                   \
         static TestConfig test_config = {                               \
+            .filename = __FILE__,                                       \
+            .line = __LINE__,                                           \
             .test_title = #name,                                        \
             .param_test_runner = name##_runner,                         \
             .param_init = name##_init,                                  \
@@ -738,6 +803,8 @@ int main(void)
     static void __attribute__((constructor)) register_##name##_runner(void) \
     {                                                                       \
         static TestConfig test_config = {                                   \
+            .filename = __FILE__,                                           \
+            .line = __LINE__,                                               \
             .test_title = #name,                                            \
             .param_test_runner = name##_runner,                             \
             .param_init = name##_init,                                      \
@@ -838,7 +905,7 @@ int main(void)
         BUILD_RELATION(==, __VA_ARGS__),        \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
         DISPLAY_RELATION(==, __VA_ARGS__),      \
-        BUILD_RELATION_REASON(!==, __VA_ARGS__))
+        BUILD_RELATION_REASON(!=, __VA_ARGS__))
 
 #define EXPECT_NEQ(...)                         \
     ATTEST_EXPECT_ENGINE(                       \
@@ -897,18 +964,18 @@ int main(void)
 #define DISPLAY_CHARS(op, x, y, ...) \
     DISPLAY_VALUES("%c %s %c", (x), #op, (y))
 
-#define EXPECT_SAME_CHAR(...)                 \
+#define EXPECT_SAME_CHAR(...)                   \
     ATTEST_EXPECT_ENGINE(                       \
-        BUILD_RELATION(==, __VA_ARGS__),           \
+        BUILD_RELATION(==, __VA_ARGS__),        \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_CHARS(==, __VA_ARGS__),      \
+        DISPLAY_CHARS(==, __VA_ARGS__),         \
         BUILD_RELATION_REASON(!=, __VA_ARGS__))
 
-#define EXPECT_DIFF_CHAR(...)                 \
+#define EXPECT_DIFF_CHAR(...)                   \
     ATTEST_EXPECT_ENGINE(                       \
-        !(BUILD_RELATION(==, __VA_ARGS__)),           \
+        !(BUILD_RELATION(==, __VA_ARGS__)),     \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_CHARS(!=, __VA_ARGS__),      \
+        DISPLAY_CHARS(!=, __VA_ARGS__),         \
         BUILD_RELATION_REASON(==, __VA_ARGS__))
 
 #define IS_NULL(ptr, ...) ptr == NULL

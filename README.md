@@ -10,7 +10,7 @@ Single header, C99 compatible, cross-platform testing runner.
  - Configurable test behavior
 
 ## Basic usage
-```C
+```c
 #include "attest.h"
 
 TEST(basic_math) {
@@ -23,7 +23,7 @@ TEST(basic_math) {
 
 ## Installation
 Drop the header file anywhere in your project's include directory. Then include it like so:
-```
+```c
 #include "attest.h"
 ```
 
@@ -49,7 +49,7 @@ The options may appear in any order. You pass the options as arguments prefixed 
 |`.after_each`|`void(*)(TextContext*)`|`NULL`|A function that runs after the test. |
 
 **Example:**
-```
+```c
 TEST(hit_api, .attempts = 10) {
     int result = handle_api_request();
     EXPECT_EQ(result, 200);
@@ -69,7 +69,7 @@ Attest passes a `TestContext` object to each lifecycle and `TEST_CTX` function.
 |`local`         |`void*`      |Data intended for a single tests. Value set to `NULL` before each triplet of `BEFORE_EACH`, `TEST_CTX` and `AFTER_EACH`. Attest cleanup data.|
 
 **Example:**
-```
+```c
 #include "attest.h"
 
 BEFORE_ALL(test_context)
@@ -101,7 +101,7 @@ Defines a test case that accepts a `Context` object.
 Accept all the options available to `TEST`.
 
 **Example:**
-```
+```c
 #include "attest.h"
 
 BEFORE_ALL(test_context)
@@ -129,7 +129,7 @@ A lifecycle function that runs before all tests and lifecycle functions.
 - `test_context`: Has type `TestContext` and allows sharing allocated data.
 
 **Example:**
-```
+```c
 BEFORE_ALL(test_context)
 {
     int* foo = malloc(sizeof(int));
@@ -148,7 +148,7 @@ A lifecycle function that runs before each test.
 - `test_context`: Has type `TestContext` and allows sharing allocated data.
 
 **Example:**
-```
+```c
 BEFORE_EACH(test_context)
 {
     int* foo = malloc(sizeof(int));
@@ -167,7 +167,7 @@ A lifecycle function that runs after each tests.
 - `test_context`: Has type `TestContext` and allows sharing allocated data.
 
 **Example:**
-```
+```c
 AFTER_EACH(test_context)
 {
     free(test_context->local);
@@ -185,7 +185,7 @@ A lifecycle function that runs after all tests and lifecycle functions.
 - `test_context`: Has type `TestContext` and allows sharing allocated data.
 
 **Example:**
-```
+```c
 AFTER_ALL(test_context)
 {
     free(test_context->shared);
@@ -212,7 +212,7 @@ AFTER_ALL(test_context)
 |`.after_each_cases` |`void(*)(ParamContext*)`|A test that runs after each case.|
 
 **Example:**
-```
+```c
 #include "attest.h"
 
 PARAM_TEST(fruit_basket,
@@ -238,7 +238,7 @@ Attest passes a `ParamContext` object to each test case of a parameterized tests
 |`set`           |`void*`   |Data intended for entire parameterized test. Should set in `.before_all_cases`. Data available for all parameterized cases.|
 
 **Example:**
-```
+```c
 #include "attest.h"
 
 PARAM_TEST_CTX(basket_case,
@@ -268,7 +268,7 @@ PARAM_TEST_CTX(basket_case,
 Accept all the options available to `PARAM_TEST`.
 
 **Example:**
-```
+```c
 #include "attest.h"
 
 PARAM_TEST_CTX(basket_case,
@@ -288,7 +288,7 @@ Attest only provide expectations. Expectations don't stop the test, attest execu
 For each expectation, you can pass it variable amount arguments passed to it and used those arguments to create a formatted message.
 
 **Example:**
-```
+```c
 TEST(hit_api, .attempts = 10) {
     int expected_status = 200;
 
@@ -330,9 +330,10 @@ Macros to change the behavior of Attest. You must define runner options before i
 |`ATTEST_MAX_TESTS` |`int`        |`128`    |Max number of tests allowed per binary.  |
 |`ATTEST_NO_COLOR`  |`bool`       |`false`  |Disables ANSI color codes in output report.|
 |`ATTEST_VALUE_BUF` |`int`        |`128`    |The max size of buffer used in failure messages. |
+|`ATTEST_MAX_PARAMERTERIZE_RESULTS` |`int`        |`32`    |The max amount of failures for a parameterize test. |
 
 **Example:**
-```
+```c
 #define ATTEST_NO_COLOR 1
 #include "attest.h"
 ```
@@ -348,6 +349,10 @@ On Windows, Attest does not compile with MSVC. Although, Attest is not compatibl
  - *nixes (GCC/Clang)
  - MacOS (GCC/Clang)
  - Windows (Clang)
+
+### Undefined behavior policy such as segmentation faults
+Thank you for asking. Attest don't catch or recover from segmentation faults.
+If the user's code segfaults, the OS terminates the test process immediately, just like any normal C program. Attest don't intercept signals, fork processes, or attempt to continue execution after undefined behavior.
 
 ### Test execution order:
 
