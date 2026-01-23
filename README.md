@@ -1,13 +1,12 @@
 # Attest
 
-Single header, C99 compatible, cross-platform testing runner.
+Single header, C99 compatible, cross-platform test runner.
 
 ## Features
- - **Cross-platorm:** Supports Windows, MacOS and Linux
- - **Zero dynamic allocation:** Uses only static storage
- - Parameterize Tests
- - Lifecycle functions
- - Configurable test behavior
+ - **Cross-Platorm:** Supports Windows, MacOS and Linux
+ - **Zero Dynamic Allocation:** Uses only static storage
+ - **Fine-Grained Orchestration:** Lifecycle Hooks, Parameterize Tests and test configuration
+ - **Structured Diagnostic Output:** Precise locations and detailed failure causes
 
 ## Basic usage
 ```c
@@ -255,7 +254,6 @@ PARAM_TEST_CTX(basket_case,
 
 
 ### `PARAM_TEST_CTX(name, param_contest, case_type, case_name, (values), [options...])`
-`
 
 **Parameters:**
 - `name`: Unique name for the parameterized test. No spaces or quotes.
@@ -307,6 +305,8 @@ TEST(hit_api, .attempts = 10) {
 |EXPECT_FALSE(x)           | `bool`           |Confirm false expression. |
 |EXPECT_SAME_STRING(a, b)  | `char*`, `char*` |Confirm same strings.     |
 |EXPECT_DIFF_STRING(a, b)  | `char*`, `char*` |Confirm different strings.|
+|EXPECT_SAME_CHAR(a, b)    | `char`, `char`   |Confirm same character.   |
+|EXPECT_DIFF_CHAR(a, b)    | `char`, `char`   |Confirm different character.|
 |EXPECT_SAME_MEMORY(a, b)  | `void*`, `void*` |Confirm same memory.      |
 |EXPECT_DIFF_MEMORY(a, b)  | `void*`, `void*` |Confirm different memory. |
 |EXPECT_SAME_PTR(a, b)     | `*`, `*`         |Confirm same pointer.     |
@@ -351,8 +351,8 @@ On Windows, Attest does not compile with MSVC. Although, Attest is not compatibl
  - Windows (Clang)
 
 ### Undefined behavior policy such as segmentation faults
-Thank you for asking. Attest don't catch or recover from segmentation faults.
-If the user's code segfaults, the OS terminates the test process immediately, just like any normal C program. Attest don't intercept signals, fork processes, or attempt to continue execution after undefined behavior.
+Attest does not catch or recover from segmentation faults.
+If the user's code segfaults, the OS terminates the test process immediately, just like any normal C program. Attest does not intercept signals, fork processes, or attempt to continue execution after undefined behavior.
 
 ### Test execution order:
 

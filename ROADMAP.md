@@ -1,5 +1,7 @@
 # Roadmap
 
+ - Provide more detailed failed details for multiple attempted tests
+ - Collocate failed expectations under a single failed test header in summary.
  - fail fast option
  - list all tests
  - `--ascii` option to disable ut8 output like symbols

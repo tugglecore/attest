@@ -120,6 +120,12 @@ typedef struct
     char values_display[ATTEST_VALUE_BUF];
     bool has_msg;
     char msg[ATTEST_VALUE_BUF];
+    char verification_text[ATTEST_VALUE_BUF];
+    char actual_label[ATTEST_VALUE_BUF];
+    char actual_value[ATTEST_VALUE_BUF];
+    bool has_expected_value;
+    char expected_label[ATTEST_VALUE_BUF];
+    char expected_value[ATTEST_VALUE_BUF];
 } FailureInfo;
 
 typedef struct
@@ -403,17 +409,23 @@ void report_failed_expectation(FailureInfo failure_info)
         BOLD_WHITE,
         attest_internal_current_test->test_title, NORMAL);
 
-    printf("%s Check: %s%s\n",
-        CYAN, NORMAL, failure_info.reason);
-
-    if (failure_info.has_display) {
-        printf("%s Values:%s %s\n",
-            CYAN, NORMAL, failure_info.values_display);
-    }
-
     if (failure_info.has_msg) {
         printf("%s Message: %s%s\n",
             CYAN, NORMAL, failure_info.msg);
+    }
+
+    printf("%s Expectation: %s%s\n",
+        CYAN, NORMAL, failure_info.verification_text);
+
+    printf("%s Values: %s\n", CYAN, NORMAL);
+
+    printf("%s   %s%s = %s\n",
+        CYAN, failure_info.actual_label, NORMAL, failure_info.actual_value);
+
+    if (failure_info.has_expected_value) {
+        printf("%s   %s%s = %s\n",
+            CYAN, failure_info.expected_label, NORMAL,
+            failure_info.expected_value);
     }
 
     printf("%s Location:%s %s%s:%d%s\n\n",
@@ -445,8 +457,6 @@ void report_failure(FailureInfo failure_info)
     attest_internal_current_test->status = FAILED;
 
     if (attest_internal_current_test->param_test) {
-        // InstanceResult instance_result = { .has_status = true, .status = PASSED };
-        // InstanceResult instance_result = parameterize_instance_results[attest_internal_current_test->param_index];
         parameterize_instance_results[attest_internal_current_test->param_index].has_status = true;
         parameterize_instance_results[attest_internal_current_test->param_index].status = FAILED;
         parameterize_instance_results[attest_internal_current_test->param_index].failures[parameterize_instance_results[attest_internal_current_test->param_index].failure_count] = failure_info;
@@ -553,8 +563,8 @@ void parameterize_test(TestConfig* test_config)
                 for (int j = 0; j < instance_result.failure_count; j++) {
                     FailureInfo instance_failure_info = instance_result.failures[j];
                     printf(
-                        "  - Expected %s%s%s but %s%s%s\n",
-                        GREEN, instance_failure_info.values_display, NORMAL, RED, instance_failure_info.reason,
+                        "  - Expected %s%s%s but got %s%s%s\n",
+                        GREEN, instance_failure_info.expected_value, NORMAL, RED, instance_failure_info.actual_value,
                         NORMAL);
                 }
                 break;
@@ -823,7 +833,7 @@ int main(void)
 // TODO: We are voiding the return values of `sn?printf` to silence
 // the warning from clang-tidy check `cert-err3-c`. Decide if it is
 // worth the increase in macro compelxity to properly handle result.
-#define PICK_ONE(x, ...) x
+#define PICK_ONE_FOR_CONDITION(x, ...) x
 
 #define COUNT_ARG(                          \
     _01, _02, _03, _04, _05, _06, _07, _08, \
@@ -846,15 +856,22 @@ int main(void)
 
 #define IGNORE_MESSAGE(...)
 
-#define SAVE_MESSAGE(...)                                                    \
-    size_t msg_size = snprintf(NULL, 0, __VA_ARGS__);                        \
-    if (msg_size > 0) {                                                      \
-        failure_info.has_msg = true;                                         \
-        if (msg_size < ATTEST_VALUE_BUF) {                                   \
-            (void)snprintf(failure_info.msg, ATTEST_VALUE_BUF, __VA_ARGS__); \
-        } else {                                                             \
-            (void)sprintf(failure_info.msg, "(truncated)");                  \
-        }                                                                    \
+#define SAVE_MESSAGE(...)                                   \
+    int msg_size = snprintf(NULL, 0, __VA_ARGS__);          \
+    if (msg_size > 0) {                                     \
+        failure_info.has_msg = true;                        \
+        if (msg_size < ATTEST_VALUE_BUF) {                  \
+            (void)snprintf(                                 \
+                failure_info.msg,                           \
+                ATTEST_VALUE_BUF,                           \
+                __VA_ARGS__);                               \
+        } else {                                            \
+            (void)sprintf(failure_info.msg, "(truncated)"); \
+        }                                                   \
+    } else if (msg_size < 0) {                              \
+        failure_info.has_msg = true;                        \
+        (void)sprintf(failure_info.msg,                     \
+            "[ERROR] Unable to format message");            \
     }
 
 #define TAKE_ONE(x, ...) __VA_ARGS__
@@ -870,7 +887,7 @@ int main(void)
 
 #define DISPLAY_VALUES(...)                                            \
     failure_info.has_display = true;                                   \
-    size_t display_size = snprintf(NULL, 0, __VA_ARGS__);              \
+    int display_size = snprintf(NULL, 0, __VA_ARGS__);                 \
     if (display_size > 0) {                                            \
         if (display_size < ATTEST_VALUE_BUF) {                         \
             (void)snprintf(failure_info.values_display,                \
@@ -883,178 +900,309 @@ int main(void)
 
 #define IGNORE_DISPLAY
 
+#define UNGROUP(...) __VA_ARGS__
+
 #define DISPLAY_RELATION(op, x, y, ...) \
     DISPLAY_VALUES("%lld %s %lld", (long long int)(x), #op, (long long int)(y))
 
-#define EXPECT(...)                            \
-    ATTEST_EXPECT_ENGINE(                      \
-        PICK_ONE(__VA_ARGS__),                 \
-        MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__), \
-        IGNORE_DISPLAY,                        \
-        BUILD_CONDITION_REASON(true, __VA_ARGS__))
+#define COLLECT_ONE_VERIFICATION_TOKEN(verification, x, ...) \
+    int verification_token_size = snprintf(                  \
+        NULL,                                                \
+        0,                                                   \
+        "%s(%s)",                                            \
+        #verification, #x);                                  \
+    if (verification_token_size > 0) {                       \
+        if (verification_token_size < ATTEST_VALUE_BUF) {    \
+            (void)snprintf(failure_info.verification_text,   \
+                ATTEST_VALUE_BUF,                            \
+                "%s(%s)",                                    \
+                #verification, #x);                          \
+        } else {                                             \
+            (void)snprintf(failure_info.verification_text,   \
+                ATTEST_VALUE_BUF,                            \
+                "%s( truncated )",                           \
+                #verification);                              \
+        }                                                    \
+    }
 
-#define EXPECT_FALSE(...)                      \
-    ATTEST_EXPECT_ENGINE(                      \
-        !(PICK_ONE(__VA_ARGS__)),              \
-        MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__), \
-        IGNORE_DISPLAY,                        \
-        BUILD_CONDITION_REASON(false, __VA_ARGS__))
+#define COLLECT_TWO_VERIFICATION_TOKENS(verification, x, y, ...) \
+    int verification_token_size = snprintf(                      \
+        NULL,                                                    \
+        0,                                                       \
+        "%s(%s, %s)",                                            \
+        #verification, #x, #y);                                  \
+    if (verification_token_size > 0) {                           \
+        if (verification_token_size < ATTEST_VALUE_BUF) {        \
+            (void)snprintf(failure_info.verification_text,       \
+                ATTEST_VALUE_BUF,                                \
+                "%s(%s, %s)",                                    \
+                #verification, #x, #y);                          \
+        } else {                                                 \
+            (void)snprintf(failure_info.verification_text,       \
+                ATTEST_VALUE_BUF,                                \
+                "%s( truncated )",                               \
+                #verification);                                  \
+        }                                                        \
+    }
 
-#define EXPECT_EQ(...)                          \
-    ATTEST_EXPECT_ENGINE(                       \
-        BUILD_RELATION(==, __VA_ARGS__),        \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_RELATION(==, __VA_ARGS__),      \
-        BUILD_RELATION_REASON(!=, __VA_ARGS__))
+#define SAVE_ONE_VALUE(format, x, ...)                \
+    failure_info.has_expected_value = false;          \
+    int actual_label_size = snprintf(                 \
+        NULL,                                         \
+        0,                                            \
+        "%s",                                         \
+        #x);                                          \
+    if (actual_label_size > 0) {                      \
+        if (actual_label_size < ATTEST_VALUE_BUF) {   \
+            (void)snprintf(failure_info.actual_label, \
+                ATTEST_VALUE_BUF,                     \
+                "%s",                                 \
+                #x);                                  \
+        } else {                                      \
+            (void)sprintf(failure_info.actual_label,  \
+                "(truncated)");                       \
+        }                                             \
+    }                                                 \
+    int actual_value_size = snprintf(                 \
+        NULL,                                         \
+        0,                                            \
+        UNGROUP format(x));                           \
+    if (actual_value_size > 0) {                      \
+        if (actual_value_size < ATTEST_VALUE_BUF) {   \
+            (void)snprintf(failure_info.actual_value, \
+                ATTEST_VALUE_BUF,                     \
+                UNGROUP format(x));                   \
+        } else {                                      \
+            (void)sprintf(failure_info.actual_value,  \
+                "(truncated)");                       \
+        }                                             \
+    }
 
-#define EXPECT_NEQ(...)                         \
-    ATTEST_EXPECT_ENGINE(                       \
-        BUILD_RELATION(!=, __VA_ARGS__),        \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_RELATION(!=, __VA_ARGS__),      \
-        BUILD_RELATION_REASON(==, __VA_ARGS__))
+#define SAVE_TWO_VALUE(format, x, y, ...)               \
+    int actual_label_size = snprintf(                   \
+        NULL,                                           \
+        0,                                              \
+        "%s",                                           \
+        #x);                                            \
+    if (actual_label_size > 0) {                        \
+        if (actual_label_size < ATTEST_VALUE_BUF) {     \
+            (void)snprintf(failure_info.actual_label,   \
+                ATTEST_VALUE_BUF,                       \
+                "%s",                                   \
+                #x);                                    \
+        } else {                                        \
+            (void)sprintf(failure_info.actual_label,    \
+                "(truncated)");                         \
+        }                                               \
+    }                                                   \
+    int actual_value_size = snprintf(                   \
+        NULL,                                           \
+        0,                                              \
+        UNGROUP format(x));                             \
+    if (actual_value_size > 0) {                        \
+        if (actual_value_size < ATTEST_VALUE_BUF) {     \
+            (void)snprintf(failure_info.actual_value,   \
+                ATTEST_VALUE_BUF,                       \
+                UNGROUP format(x));                     \
+        } else {                                        \
+            (void)sprintf(failure_info.actual_value,    \
+                "(truncated)");                         \
+        }                                               \
+    }                                                   \
+    int expected_label_size = snprintf(                 \
+        NULL,                                           \
+        0,                                              \
+        "%s",                                           \
+        #y);                                            \
+    if (expected_label_size > 0) {                      \
+        if (expected_label_size < ATTEST_VALUE_BUF) {   \
+            (void)snprintf(failure_info.expected_label, \
+                ATTEST_VALUE_BUF,                       \
+                "%s",                                   \
+                #y);                                    \
+        } else {                                        \
+            (void)sprintf(failure_info.expected_label,  \
+                "(truncated)");                         \
+        }                                               \
+    }                                                   \
+    int expected_value_size = snprintf(                 \
+        NULL,                                           \
+        0,                                              \
+        UNGROUP format(y));                             \
+    if (expected_value_size > 0) {                      \
+        if (actual_value_size < ATTEST_VALUE_BUF) {     \
+            (void)snprintf(failure_info.expected_value, \
+                ATTEST_VALUE_BUF,                       \
+                UNGROUP format(y));                     \
+        } else {                                        \
+            (void)sprintf(failure_info.expected_value,  \
+                "(truncated)");                         \
+        }                                               \
+    }
 
-#define EXPECT_GT(...)                          \
-    ATTEST_EXPECT_ENGINE(                       \
-        BUILD_RELATION(>, __VA_ARGS__),         \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_RELATION(>, __VA_ARGS__),       \
-        BUILD_RELATION_REASON(<=, __VA_ARGS__))
+#define EXPECT(...)                                          \
+    ATTEST_EXPECT(                                           \
+        PICK_ONE_FOR_CONDITION(__VA_ARGS__),                 \
+        MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__),               \
+        COLLECT_ONE_VERIFICATION_TOKEN(EXPECT, __VA_ARGS__), \
+        SAVE_ONE_VALUE(("%d", ), __VA_ARGS__))
 
-#define EXPECT_GTE(...)                         \
-    ATTEST_EXPECT_ENGINE(                       \
-        BUILD_RELATION(>=, __VA_ARGS__),        \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_RELATION(>=, __VA_ARGS__),      \
-        BUILD_RELATION_REASON(<, __VA_ARGS__))
+#define EXPECT_FALSE(...)                                          \
+    ATTEST_EXPECT(                                                 \
+        !(PICK_ONE_FOR_CONDITION(__VA_ARGS__)),                    \
+        MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__),                     \
+        COLLECT_ONE_VERIFICATION_TOKEN(EXPECT_FALSE, __VA_ARGS__), \
+        SAVE_ONE_VALUE(("%d", ), __VA_ARGS__))
 
-#define EXPECT_LT(...)                          \
-    ATTEST_EXPECT_ENGINE(                       \
-        BUILD_RELATION(<, __VA_ARGS__),         \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_RELATION(<, __VA_ARGS__),       \
-        BUILD_RELATION_REASON(>=, __VA_ARGS__))
+#define EXPECT_EQ(...)                                           \
+    ATTEST_EXPECT(                                               \
+        BUILD_RELATION(==, __VA_ARGS__),                         \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                  \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_EQ, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
 
-#define EXPECT_LTE(...)                         \
-    ATTEST_EXPECT_ENGINE(                       \
-        BUILD_RELATION(<=, __VA_ARGS__),        \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_RELATION(<=, __VA_ARGS__),      \
-        BUILD_RELATION_REASON(>, __VA_ARGS__))
+#define EXPECT_NEQ(...)                                           \
+    ATTEST_EXPECT(                                                \
+        BUILD_RELATION(!=, __VA_ARGS__),                          \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                   \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_NEQ, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
+
+#define EXPECT_GT(...)                                           \
+    ATTEST_EXPECT(                                               \
+        BUILD_RELATION(>, __VA_ARGS__),                          \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                  \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_GT, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
+
+#define EXPECT_GTE(...)                                           \
+    ATTEST_EXPECT(                                                \
+        BUILD_RELATION(>=, __VA_ARGS__),                          \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                   \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_GTE, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
+
+#define EXPECT_LT(...)                                           \
+    ATTEST_EXPECT(                                               \
+        BUILD_RELATION(<, __VA_ARGS__),                          \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                  \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_LT, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
+
+#define EXPECT_LTE(...)                                           \
+    ATTEST_EXPECT(                                                \
+        BUILD_RELATION(<=, __VA_ARGS__),                          \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                   \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_LTE, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
 
 #define COMPARE_STRINGS(a, b) strcmp(a, b) == 0
 
-#define DISPLAY_STRING(x, y, ...) \
-    DISPLAY_VALUES("LHS=\"%s\", RHS=\"%s\"", x, y)
+// #define DISPLAY_STRING(x, y, ...) \
+//     DISPLAY_VALUES("LHS=\"%s\", RHS=\"%s\"", x, y)
+//
+#define EXPECT_SAME_STRING(...)                                           \
+    ATTEST_EXPECT(                                                        \
+        COMPARE_STRINGS(__VA_ARGS__),                                     \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                           \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_SAME_STRING, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%s", ), __VA_ARGS__))
 
-#define EXPECT_SAME_STRING(...)                 \
-    ATTEST_EXPECT_ENGINE(                       \
-        COMPARE_STRINGS(__VA_ARGS__),           \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_STRING(__VA_ARGS__),            \
-        BUILD_RELATION_REASON(==, __VA_ARGS__))
+#define EXPECT_DIFF_STRING(...)                                           \
+    ATTEST_EXPECT(                                                        \
+        !(COMPARE_STRINGS(__VA_ARGS__)),                                  \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                           \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_DIFF_STRING, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%s", ), __VA_ARGS__))
 
-#define EXPECT_DIFF_STRING(...)                 \
-    ATTEST_EXPECT_ENGINE(                       \
-        !(COMPARE_STRINGS(__VA_ARGS__)),        \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_STRING(__VA_ARGS__),            \
-        BUILD_RELATION_REASON(==, __VA_ARGS__))
+// #define DISPLAY_CHARS(op, x, y, ...) \
+//     DISPLAY_VALUES("%c %s %c", (x), #op, (y))
+//
+#define EXPECT_SAME_CHAR(...)                                           \
+    ATTEST_EXPECT(                                                      \
+        BUILD_RELATION(==, __VA_ARGS__),                                \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                         \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_SAME_CHAR, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%c", ), __VA_ARGS__))
 
-#define DISPLAY_CHARS(op, x, y, ...) \
-    DISPLAY_VALUES("%c %s %c", (x), #op, (y))
-
-#define EXPECT_SAME_CHAR(...)                   \
-    ATTEST_EXPECT_ENGINE(                       \
-        BUILD_RELATION(==, __VA_ARGS__),        \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_CHARS(==, __VA_ARGS__),         \
-        BUILD_RELATION_REASON(!=, __VA_ARGS__))
-
-#define EXPECT_DIFF_CHAR(...)                   \
-    ATTEST_EXPECT_ENGINE(                       \
-        !(BUILD_RELATION(==, __VA_ARGS__)),     \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_CHARS(!=, __VA_ARGS__),         \
-        BUILD_RELATION_REASON(==, __VA_ARGS__))
+#define EXPECT_DIFF_CHAR(...)                                           \
+    ATTEST_EXPECT(                                                      \
+        !(BUILD_RELATION(==, __VA_ARGS__)),                             \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                         \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_DIFF_CHAR, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%c", ), __VA_ARGS__))
 
 #define IS_NULL(ptr, ...) ptr == NULL
+//
+// #define BUILD_PTR_REASON(status, ptr, ...) \
+//     "Pointer [ %s ] should %s", #ptr, #status
+//
+// #define DISPLAY_STRING(x, y, ...) \
+//     DISPLAY_VALUES("LHS=\"%s\", RHS=\"%s\"", x, y)
+//
+#define EXPECT_NULL(...)                                          \
+    ATTEST_EXPECT(                                                \
+        IS_NULL(__VA_ARGS__),                                     \
+        MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__),                    \
+        COLLECT_ONE_VERIFICATION_TOKEN(EXPECT_NULL, __VA_ARGS__), \
+        SAVE_ONE_VALUE(("%p", (void*)), __VA_ARGS__))
 
-#define BUILD_PTR_REASON(status, ptr, ...) \
-    "Pointer [ %s ] should %s", #ptr, #status
+#define EXPECT_NOT_NULL(...)                                          \
+    ATTEST_EXPECT(                                                    \
+        !(IS_NULL(__VA_ARGS__)),                                      \
+        MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__),                        \
+        COLLECT_ONE_VERIFICATION_TOKEN(EXPECT_NOT_NULL, __VA_ARGS__), \
+        SAVE_ONE_VALUE(("%p", (void*)), __VA_ARGS__))
+//
+// #define SAME_PTR(ptr_a, ptr_b, ...) ptr_a == ptr_b
+//
+#define EXPECT_SAME_PTR(...)                                           \
+    ATTEST_EXPECT(                                                     \
+        BUILD_RELATION(==, __VA_ARGS__),                               \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                        \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_SAME_PTR, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%p", (void*)), __VA_ARGS__))
 
-#define DISPLAY_STRING(x, y, ...) \
-    DISPLAY_VALUES("LHS=\"%s\", RHS=\"%s\"", x, y)
-
-#define EXPECT_NULL(...)                       \
-    ATTEST_EXPECT_ENGINE(                      \
-        IS_NULL(__VA_ARGS__),                  \
-        MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__), \
-        IGNORE_DISPLAY,                        \
-        BUILD_PTR_REASON(be NULL, __VA_ARGS__))
-
-#define EXPECT_NOT_NULL(...)                   \
-    ATTEST_EXPECT_ENGINE(                      \
-        !(IS_NULL(__VA_ARGS__)),               \
-        MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__), \
-        IGNORE_DISPLAY,                        \
-        BUILD_PTR_REASON(not be NULL, __VA_ARGS__))
-
-#define SAME_PTR(ptr_a, ptr_b, ...) ptr_a == ptr_b
-
-#define EXPECT_SAME_PTR(...)                    \
-    ATTEST_EXPECT_ENGINE(                       \
-        SAME_PTR(__VA_ARGS__),                  \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        IGNORE_DISPLAY,                         \
-        BUILD_RELATION_REASON(==, __VA_ARGS__))
-
-#define EXPECT_DIFF_PTR(...)                    \
-    ATTEST_EXPECT_ENGINE(                       \
-        !(SAME_PTR(__VA_ARGS__)),               \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        IGNORE_DISPLAY,                         \
-        BUILD_RELATION_REASON(!=, __VA_ARGS__))
+#define EXPECT_DIFF_PTR(...)                                           \
+    ATTEST_EXPECT(                                                     \
+        !(BUILD_RELATION(==, __VA_ARGS__)),                            \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                        \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_DIFF_PTR, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%p", (void*)), __VA_ARGS__))
 
 #define SAME_MEMORY(ptr_a, ptr_b, size, ...) memcmp(ptr_a, ptr_b, size) == 0
 
-#define EXPECT_SAME_MEMORY(...)                 \
-    ATTEST_EXPECT_ENGINE(                       \
-        SAME_MEMORY(__VA_ARGS__),               \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_BOOLEAN(__VA_ARGS__),           \
-        BUILD_RELATION_REASON(==, __VA_ARGS__))
+#define EXPECT_SAME_MEMORY(...)                                        \
+    ATTEST_EXPECT(                                                     \
+        SAME_MEMORY(__VA_ARGS__),                                      \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                        \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_SAME_MEM, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%p", (void*)), __VA_ARGS__))
 
-#define EXPECT_DIFF_MEMORY(...)                 \
-    ATTEST_EXPECT_ENGINE(                       \
-        !(SAME_MEMORY(__VA_ARGS__)),            \
-        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__), \
-        DISPLAY_BOOLEAN(__VA_ARGS__),           \
-        BUILD_RELATION_REASON(!=, __VA_ARGS__))
+#define EXPECT_DIFF_MEMORY(...)                                        \
+    ATTEST_EXPECT(                                                     \
+        !(SAME_MEMORY(__VA_ARGS__)),                                   \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                        \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_DIFF_MEM, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%p", (void*)), __VA_ARGS__))
 
-#define ATTEST_EXPECT_ENGINE(condition, value_display, save_msg, ...) \
-    do {                                                              \
-        if (condition) {                                              \
-            report_success();                                         \
-            break;                                                    \
-        }                                                             \
-        FailureInfo failure_info = {                                  \
-            .filename = __FILE__,                                     \
-            .line = __LINE__,                                         \
-            .has_msg = false,                                         \
-            .has_display = false,                                     \
-        };                                                            \
-        save_msg;                                                     \
-        value_display;                                                \
-        size_t reason_size = snprintf(NULL, 0, __VA_ARGS__);          \
-        if (reason_size < ATTEST_VALUE_BUF) {                         \
-            (void)snprintf(failure_info.reason,                       \
-                ATTEST_VALUE_BUF, __VA_ARGS__);                       \
-        } else {                                                      \
-            (void)sprintf(failure_info.reason,                        \
-                "Expression is false: (truncated)");                  \
-        }                                                             \
-        report_failure(failure_info);                                 \
+#define ATTEST_EXPECT(condition, save_msg, save_verification, save_values) \
+    do {                                                                   \
+        if (condition) {                                                   \
+            report_success();                                              \
+            break;                                                         \
+        }                                                                  \
+        FailureInfo failure_info = {                                       \
+            .filename = __FILE__,                                          \
+            .line = __LINE__,                                              \
+            .has_msg = false,                                              \
+            .has_display = false,                                          \
+        };                                                                 \
+        save_msg;                                                          \
+        save_verification;                                                 \
+        failure_info.has_expected_value = true;                            \
+        save_values;                                                       \
+        report_failure(failure_info);                                      \
     } while (0)
 
 /**********************************************
