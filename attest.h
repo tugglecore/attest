@@ -79,27 +79,23 @@ typedef struct TestConfig {
     char* group_title;
     char* test_title;
     bool skip;
-    void* data;
+    bool disabled;
     int attempts;
-    void (*param_init)(void);
+    void (*contextual_test)(TestContext*);
+    void (*simple_test)(void);
     void (*before)(TestContext*);
+    void (*after)(TestContext*);
     void (*before_all_cases)(ParamContext*);
     void (*before_each_case)(ParamContext*);
     void (*after_all_cases)(ParamContext*);
     void (*after_each_case)(ParamContext*);
-    void (*contextual_test)(TestContext*);
-    void (*simple_test)(void);
+    void (*param_init)(void);
+    void (*param_test_runner)(void);
     void (*param_test)(struct TestConfig);
-    void (*after)(TestContext*);
     struct TestConfig* next;
-    bool disabled;
-    void* values_ptr;
-    size_t stride;
-    int count;
     int attempt_count;
     int param_index;
     char* tags[10];
-    void (*param_test_runner)(void);
     Status status;
 } TestConfig;
 
@@ -115,9 +111,6 @@ typedef struct
     char* test_name;
     char* filename;
     int line;
-    char reason[ATTEST_VALUE_BUF];
-    bool has_display;
-    char values_display[ATTEST_VALUE_BUF];
     bool has_msg;
     char msg[ATTEST_VALUE_BUF];
     char verification_text[ATTEST_VALUE_BUF];
@@ -885,25 +878,7 @@ int main(void)
 
 #define BUILD_RELATION(operator, x, y, ...) x operator y
 
-#define DISPLAY_VALUES(...)                                            \
-    failure_info.has_display = true;                                   \
-    int display_size = snprintf(NULL, 0, __VA_ARGS__);                 \
-    if (display_size > 0) {                                            \
-        if (display_size < ATTEST_VALUE_BUF) {                         \
-            (void)snprintf(failure_info.values_display,                \
-                ATTEST_VALUE_BUF,                                      \
-                __VA_ARGS__);                                          \
-        } else {                                                       \
-            (void)sprintf(failure_info.values_display, "(truncated)"); \
-        }                                                              \
-    }
-
-#define IGNORE_DISPLAY
-
 #define UNGROUP(...) __VA_ARGS__
-
-#define DISPLAY_RELATION(op, x, y, ...) \
-    DISPLAY_VALUES("%lld %s %lld", (long long int)(x), #op, (long long int)(y))
 
 #define COLLECT_ONE_VERIFICATION_TOKEN(verification, x, ...) \
     int verification_token_size = snprintf(                  \
@@ -979,6 +954,7 @@ int main(void)
     }
 
 #define SAVE_TWO_VALUE(format, x, y, ...)               \
+    failure_info.has_expected_value = true;             \
     int actual_label_size = snprintf(                   \
         NULL,                                           \
         0,                                              \
@@ -1098,9 +1074,6 @@ int main(void)
 
 #define COMPARE_STRINGS(a, b) strcmp(a, b) == 0
 
-// #define DISPLAY_STRING(x, y, ...) \
-//     DISPLAY_VALUES("LHS=\"%s\", RHS=\"%s\"", x, y)
-//
 #define EXPECT_SAME_STRING(...)                                           \
     ATTEST_EXPECT(                                                        \
         COMPARE_STRINGS(__VA_ARGS__),                                     \
@@ -1115,9 +1088,6 @@ int main(void)
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_DIFF_STRING, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%s", ), __VA_ARGS__))
 
-// #define DISPLAY_CHARS(op, x, y, ...) \
-//     DISPLAY_VALUES("%c %s %c", (x), #op, (y))
-//
 #define EXPECT_SAME_CHAR(...)                                           \
     ATTEST_EXPECT(                                                      \
         BUILD_RELATION(==, __VA_ARGS__),                                \
@@ -1133,13 +1103,7 @@ int main(void)
         SAVE_TWO_VALUE(("%c", ), __VA_ARGS__))
 
 #define IS_NULL(ptr, ...) ptr == NULL
-//
-// #define BUILD_PTR_REASON(status, ptr, ...) \
-//     "Pointer [ %s ] should %s", #ptr, #status
-//
-// #define DISPLAY_STRING(x, y, ...) \
-//     DISPLAY_VALUES("LHS=\"%s\", RHS=\"%s\"", x, y)
-//
+
 #define EXPECT_NULL(...)                                          \
     ATTEST_EXPECT(                                                \
         IS_NULL(__VA_ARGS__),                                     \
@@ -1153,9 +1117,7 @@ int main(void)
         MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__),                        \
         COLLECT_ONE_VERIFICATION_TOKEN(EXPECT_NOT_NULL, __VA_ARGS__), \
         SAVE_ONE_VALUE(("%p", (void*)), __VA_ARGS__))
-//
-// #define SAME_PTR(ptr_a, ptr_b, ...) ptr_a == ptr_b
-//
+
 #define EXPECT_SAME_PTR(...)                                           \
     ATTEST_EXPECT(                                                     \
         BUILD_RELATION(==, __VA_ARGS__),                               \
@@ -1196,11 +1158,9 @@ int main(void)
             .filename = __FILE__,                                          \
             .line = __LINE__,                                              \
             .has_msg = false,                                              \
-            .has_display = false,                                          \
         };                                                                 \
         save_msg;                                                          \
         save_verification;                                                 \
-        failure_info.has_expected_value = true;                            \
         save_values;                                                       \
         report_failure(failure_info);                                      \
     } while (0)
