@@ -210,8 +210,13 @@ bool is_duplicate_title(char* subject)
 void attester(TestConfig cfg)
 {
 #pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpragmas"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunknown-warning-option"
+#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdangling-pointer"
     attest_internal_current_test = &cfg;
+#pragma GCC diagnostic pop
 #pragma GCC diagnostic pop
 
     bool is_param_test = cfg.param_test != NULL;
