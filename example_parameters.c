@@ -7,12 +7,19 @@ BEFORE_ALL(ctx)
     ctx->shared = (void*)foo;
 }
 
-PARAM_TEST(fruit_basket,
+PARAM_TEST(candy_basket,
     int,
     num,
-    (1, 2, 3))
+    (
+        { .data = 3, "one name" },
+        { .data = 3, .case_name = "two name" },
+        { .data = 3, "" },
+        { .case_name = "fourth name", .data = 4 },
+        { .data = 5 },
+        { 7, "" }))
 {
-    EXPECT_EQ(num, 1);
+    EXPECT_EQ(num, 1, "not a one");
+    EXPECT_EQ(num, 3, "not a three");
 }
 
 void before_all_cases(ParamContext* context)
@@ -43,7 +50,7 @@ PARAM_TEST_CTX(basket_case,
     context,
     int,
     num,
-    (1, 2, 3),
+    ({ .data = 1 } , { .data = 2 } , { .data = 3 }),
     .before_all_cases = before_all_cases,
     .before_each_case = before_each_case,
     .after_all_cases = after_all_cases,

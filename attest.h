@@ -14,6 +14,10 @@
 #ifndef ATTEST_MAX_TESTS
 #define ATTEST_MAX_TESTS 128
 #endif
+
+#ifndef ATTEST_MAX_CASE_TITLE_SIZE
+#define ATTEST_MAX_CASE_TITLE_SIZE 128
+#endif
 //
 // Default max failures for a parameterize test
 #ifndef ATTEST_MAX_PARAMERTERIZE_RESULTS
@@ -45,6 +49,15 @@
 #define BOLD_WHITE "\x1b[1;97m"
 #endif
 
+#ifdef ATTEST_NO_UTF8
+#define BRANCH "|--"
+#define TRUNK "|"
+#define LEAF "|__"
+#else
+#define BRANCH "├──"
+#define TRUNK "│"
+#define LEAF "└──"
+#endif
 /**************************
  * PUBLIC TYPES
  *************************/
@@ -59,8 +72,9 @@ typedef struct
 {
     void* shared;
     void* set;
-    void* case_data;
     void* local;
+    void* case_data;
+    char* case_name;
 } ParamContext;
 
 /**************************
@@ -121,8 +135,10 @@ typedef struct
     char expected_value[ATTEST_VALUE_BUF];
 } FailureInfo;
 
+// TODO: standarize instance noun to case
 typedef struct
 {
+    char* case_name;
     Status status;
     int failure_count;
     FailureInfo failures[ATTEST_MAX_PARAMERTERIZE_RESULTS];
@@ -147,7 +163,7 @@ int pass_count = 0;
 int fail_count = 0;
 int skip_count = 0;
 int empty_count = 0;
-static int test_instance_count = 0;
+static int case_count = 0;
 
 static TestConfig* attest_registry_head = NULL;
 
@@ -174,9 +190,7 @@ static AttestContext attest_context = {
     .global_shared_data = NULL
 };
 
-static ParamContext global_param_context = {
-    .shared = NULL
-};
+static ParamContext global_param_context;
 
 /**************************
  * RUNNER
@@ -197,22 +211,6 @@ void attester(TestConfig cfg)
 {
     attest_internal_current_test = &cfg;
     bool is_param_test = cfg.param_test != NULL;
-
-    if (cfg.attempts < 0) {
-        fprintf(stderr, "%s[ERROR] `attempts` need to be positive.%s\n", RED, NORMAL);
-        exit(1); // NOLINT
-    }
-
-    if (cfg.test_title == NULL) {
-        fprintf(stderr, "%s[ERROR] Test case missing title%s\n", RED, NORMAL);
-        exit(1); // NOLINT
-    }
-
-    if (is_duplicate_title(cfg.test_title) && !is_param_test) {
-        // NOLINTNEXTLINE
-        fprintf(stderr, "%s[ERROR] Duplicate Test case title%s\n", RED, NORMAL);
-        exit(1); // NOLINT
-    }
 
     if (cfg.disabled) {
         return;
@@ -385,10 +383,11 @@ void report_success()
             GREEN,
             NORMAL);
     } else if (current_test->param_test && !parameterize_instance_results[current_test->param_index].has_status) {
-        InstanceResult instance_result = { .has_status = true, .status = PASSED };
-        instance_result.has_status = true;
-        instance_result.status = PASSED;
-        parameterize_instance_results[current_test->param_index] = instance_result;
+        parameterize_instance_results[current_test->param_index] = (InstanceResult) {
+            .case_name = global_param_context.case_name,
+            .has_status = true,
+            .status = PASSED
+        };
     }
 }
 
@@ -449,11 +448,14 @@ void report_failure(FailureInfo failure_info)
 {
     attest_internal_current_test->status = FAILED;
 
+    // TODO: cleanup
     if (attest_internal_current_test->param_test) {
-        parameterize_instance_results[attest_internal_current_test->param_index].has_status = true;
-        parameterize_instance_results[attest_internal_current_test->param_index].status = FAILED;
-        parameterize_instance_results[attest_internal_current_test->param_index].failures[parameterize_instance_results[attest_internal_current_test->param_index].failure_count] = failure_info;
-        parameterize_instance_results[attest_internal_current_test->param_index].failure_count++;
+        InstanceResult* case_result = &parameterize_instance_results[attest_internal_current_test->param_index];
+        case_result->has_status = true;
+        case_result->case_name = global_param_context.case_name;
+        case_result->status = FAILED;
+        case_result->failures[case_result->failure_count] = failure_info;
+        case_result->failure_count++;
     } else if (attest_internal_current_test->attempts == 0) {
         report_failed_expectation(failure_info);
     } else {
@@ -463,7 +465,7 @@ void report_failure(FailureInfo failure_info)
 
 bool any_instance(Status status)
 {
-    for (int i = 0; i < test_instance_count; i++) {
+    for (int i = 0; i < case_count; i++) {
         if (parameterize_instance_results[i].status == status) {
             return true;
         }
@@ -473,7 +475,7 @@ bool any_instance(Status status)
 
 bool every_instance(Status status)
 {
-    for (int i = 0; i < test_instance_count; i++) {
+    for (int i = 0; i < case_count; i++) {
         if (parameterize_instance_results[i].status != status) {
             return false;
         }
@@ -481,11 +483,11 @@ bool every_instance(Status status)
     return true;
 }
 
-void parameterize_test(TestConfig* test_config)
+void run_parameterize_test(TestConfig* test_config)
 {
     test_config->param_init();
 
-    if (test_instance_count == 0) {
+    if (case_count == 0) {
         fprintf(stderr, "%s[ATTEST ERROR] Pass values enclosed with parenthesis when using `PARAM_TEST` or `PARAM_TEST_CTX`.%s\n", RED, NORMAL);
         exit(1); // NOLINT
     }
@@ -499,6 +501,8 @@ void parameterize_test(TestConfig* test_config)
     test_config->param_test_runner();
 
     total_tests++;
+    // printf("global after %s\n", global_param_context.case_name);
+    // printf("resy after %s\n", parameterize_instance_results[1].case_name);
 
     bool empty_tests_are_present = any_instance(MISSING_EXPECTATION);
 
@@ -522,70 +526,132 @@ void parameterize_test(TestConfig* test_config)
     } else {
         failed_test_titles[fail_count] = test_config->test_title;
         fail_count++;
-        printf(
-            "%s[PARAMETERIZE]%s %s%s%s\n",
-            MAGENTA, NORMAL, BOLD_WHITE,
-            test_config->test_title,
-            NORMAL);
 
-        for (int i = 0; i < test_instance_count; i++) {
-            InstanceResult instance_result = parameterize_instance_results[i];
-            printf(
-                "%s [INSTANCE %d ] %s",
-                GRAY,
-                i + 1,
-                NORMAL);
+        int amount_of_passed_cases = 0;
+        int amount_of_failed_cases = 0;
+        InstanceResult* failed_cases[ATTEST_MAX_TESTS];
 
+        for (int i = 0; i < case_count; i++) {
             switch (parameterize_instance_results[i].status) {
             case PASSED:
-                printf("%sPASSED%s\n", GREEN, NORMAL);
+                amount_of_passed_cases++;
+                break;
+            case FAILED:
+                failed_cases[amount_of_failed_cases] = &parameterize_instance_results[i];
+                amount_of_failed_cases++;
                 break;
             case MISSING_EXPECTATION:
                 fprintf(
                     stderr,
-                    "%s[ATTEST ERROR] Reach unreachable state. Print debug logs and file issue.%s\n",
+                    "%s[ERROR] Missing Assertion in parameterize test case. Please use atleast one expectation in every case. Location: %s:%d%s\n",
                     RED,
+                    test_config->filename,
+                    test_config->line,
                     NORMAL);
-                break;
-            case FAILED:
-                printf("%sFAILED%s\n", RED, NORMAL);
-                printf(
-                    "%s  Reasons:%s\n",
-                    RED,
-                    NORMAL);
-                for (int j = 0; j < instance_result.failure_count; j++) {
-                    FailureInfo instance_failure_info = instance_result.failures[j];
-                    printf(
-                        "  - Expected %s%s%s but got %s%s%s\n",
-                        GREEN, instance_failure_info.expected_value, NORMAL, RED, instance_failure_info.actual_value,
-                        NORMAL);
-                }
+                exit(1); // NOLINT
                 break;
             default:
                 fprintf(
                     stderr,
-                    "%s[ATTEST ERROR] Reach unreachable state. Print debug logs and file issue.%s\n",
+                    "%s[ERROR] Reached unreachable state. File issue%s\n",
                     RED,
                     NORMAL);
-                break;
-            }
-        }
-
-        int amount_of_passed_cases = 0;
-
-        for (int i = 0; i < test_instance_count; i++) {
-            if (parameterize_instance_results[i].status == PASSED) {
-                amount_of_passed_cases++;
+                exit(1); // NOLINT
             }
         }
 
         printf(
-            "%s[FAILED]%s %s%s%s - %d/%d passed\n\n",
+            "%s[FAILED]%s %s%s%s (%d/%d passed)\n",
             RED, NORMAL, BOLD_WHITE,
             test_config->test_title,
             NORMAL,
-            amount_of_passed_cases, test_instance_count);
+            amount_of_passed_cases, case_count);
+
+        printf("%s%s%s\n", GRAY, TRUNK, NORMAL);
+
+        for (int i = 0; i < amount_of_failed_cases; i++) {
+            bool is_last_failed_case = i == amount_of_failed_cases - 1;
+            InstanceResult* case_result = failed_cases[i];
+
+            printf(
+                "%s%s Case [%d]:%s %s\n",
+                GRAY,
+                is_last_failed_case ? LEAF : BRANCH,
+                i + 1,
+                NORMAL,
+                case_result->case_name[0] == '\0'
+                    ? "<unnamed>"
+                    : case_result->case_name);
+
+            for (int j = 0; j < case_result->failure_count; j++) {
+                bool is_last_failure = j == case_result->failure_count - 1;
+
+                if (is_last_failed_case) {
+                    printf("    ");
+                } else {
+                    printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
+                }
+
+                FailureInfo case_failure_info = case_result->failures[j];
+                printf(
+                    "%s%s%s %s@L%d: %s\n",
+                    GRAY,
+                    is_last_failure ? LEAF : BRANCH,
+                    NORMAL,
+                    case_failure_info.filename,
+                    case_failure_info.line,
+                    case_failure_info.verification_text);
+
+                if (case_failure_info.has_msg) {
+                    if (is_last_failed_case) {
+                        printf("    ");
+                    } else {
+                        printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
+                    }
+
+                    if (is_last_failure) {
+                        printf("    ");
+                    } else {
+                        printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
+                    }
+
+                    printf("Message: %s\n", case_failure_info.msg);
+                }
+
+                if (case_failure_info.has_expected_value) {
+                    if (is_last_failed_case) {
+                        printf("    ");
+                    } else {
+                        printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
+                    }
+
+                    if (is_last_failure) {
+                        printf("    ");
+                    } else {
+                        printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
+                    }
+
+                    printf("Expected: %s%s%s\n", GREEN, case_failure_info.expected_value, NORMAL);
+                }
+
+                if (is_last_failed_case) {
+                    printf("    ");
+                } else {
+                    printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
+                }
+
+                if (is_last_failure) {
+                    printf("    ");
+                } else {
+                    printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
+                }
+
+                printf("Actual:   %s%s%s\n", RED, case_failure_info.actual_value, NORMAL);
+            }
+        }
     }
+
+    printf("\n");
 
     if (parameterize_after_all_cases != NULL) {
         parameterize_after_all_cases(&global_param_context);
@@ -597,7 +663,7 @@ void parameterize_test(TestConfig* test_config)
 
     parameterize_before_all_cases = NULL;
     parameterize_after_all_cases = NULL;
-    test_instance_count = 0;
+    case_count = 0;
 
     memset(parameterize_instance_results, 0, sizeof(InstanceResult) * ATTEST_MAX_TESTS);
 }
@@ -633,16 +699,66 @@ int main(void)
         }
     }
 
-    TestConfig* t = attest_registry_head;
+    char* test_titles[ATTEST_MAX_TESTS];
+    int test_count = 0;
+    TestConfig* test_config = attest_registry_head;
 
-    while (t) {
-        if (t->param_test_runner) {
-            parameterize_test(t);
-        } else {
-            attester(*t);
+    while (test_config) {
+        if (test_config->attempts < 0) {
+            fprintf(
+                stderr,
+                "%s[ERROR] `attempts` need to be positive. Location: %s:%d%s\n",
+                RED,
+                test_config->filename,
+                test_config->line,
+                NORMAL);
+            exit(1); // NOLINT
         }
 
-        t = t->next;
+        if (test_config->test_title == NULL) {
+            fprintf(
+                stderr,
+                "%s[ERROR] Test case missing title. Location: %s:%d%s\n",
+                RED,
+                test_config->filename,
+                test_config->line,
+                NORMAL);
+            exit(1); // NOLINT
+        }
+
+        if (test_config->param_test == NULL) {
+            for (int i = 0; i < test_count; i++) {
+                char* past_test_title = test_titles[i];
+                bool is_duplicate = strcmp(test_config->test_title, past_test_title) == 0;
+                if (is_duplicate) {
+                    fprintf(
+                        stderr,
+                        "%s[ERROR] Duplicate Test case title. Location: %s:%d%s\n",
+                        RED,
+                        test_config->filename,
+                        test_config->line,
+                        NORMAL);
+                    exit(1); // NOLINT
+                }
+            }
+        }
+
+        test_titles[test_count] = test_config->test_title;
+        test_count++;
+        test_config = test_config->next;
+    }
+
+
+    test_config = attest_registry_head;
+
+    while (test_config) {
+        if (test_config->param_test_runner) {
+            run_parameterize_test(test_config);
+        } else {
+            attester(*test_config);
+        }
+
+        test_config = test_config->next;
     }
 
     if (attest_after_all_handler) {
@@ -726,71 +842,81 @@ int main(void)
 #define UNWRAP(...) __VA_ARGS__
 #define STRIP_PARENS(x) UNWRAP x
 
-#define PARAM_TEST(name, param_type, param_var, values_group, ...)      \
-    void name##_impl(param_type param_var);                             \
-    void name##_impl_wrapper(TestConfig cfg);                           \
-    static const param_type name##_data[] = {                           \
-        STRIP_PARENS(values_group)                                      \
-    };                                                                  \
-                                                                        \
-    void name##_init(void)                                              \
-    {                                                                   \
-        TestConfig cfg = { __VA_ARGS__ };                               \
-        test_instance_count = sizeof(name##_data) / sizeof(param_type); \
-        parameterize_before_all_cases = cfg.before_all_cases;           \
-        parameterize_after_all_cases = cfg.after_all_cases;             \
-    }                                                                   \
-    void name##_runner(void)                                            \
-    {                                                                   \
-        for (int i = 0; i < test_instance_count; i++) {                 \
-            TestConfig param_cfg = {                                    \
-                .filename = __FILE__,                                   \
-                .line = __LINE__,                                       \
-                .test_title = #name,                                    \
-                .param_test = name##_impl_wrapper,                      \
-                .param_index = i,                                       \
-                __VA_ARGS__                                             \
-            };                                                          \
-            global_param_context.case_data = (void*)&name##_data[i];    \
-            attester(param_cfg);                                        \
-        }                                                               \
-    }                                                                   \
-    static void __attribute__((constructor))                            \
-    register_##name##_runner(void)                                      \
-    {                                                                   \
-        static TestConfig test_config = {                               \
-            .filename = __FILE__,                                       \
-            .line = __LINE__,                                           \
-            .test_title = #name,                                        \
-            .param_test_runner = name##_runner,                         \
-            .param_init = name##_init,                                  \
-        };                                                              \
-        attest_update_registry(&test_config);                           \
-    }                                                                   \
-    void name##_impl_wrapper(TestConfig cfg)                            \
-    {                                                                   \
-        name##_impl(name##_data[cfg.param_index]);                      \
-    }                                                                   \
+#define PARAM_TEST(name, param_type, param_var, values_group, ...)     \
+    void name##_impl(param_type param_var);                            \
+    void name##_impl_wrapper(TestConfig cfg);                          \
+    struct name##_type {                                               \
+        param_type data;                                               \
+        char case_name[ATTEST_MAX_CASE_TITLE_SIZE];                    \
+    };                                                                 \
+    static struct name##_type name##_data[] = {                        \
+        STRIP_PARENS(values_group)                                     \
+    };                                                                 \
+                                                                       \
+    void name##_init(void)                                             \
+    {                                                                  \
+        TestConfig cfg = { __VA_ARGS__ };                              \
+        case_count = sizeof(name##_data) / sizeof(struct name##_type); \
+        parameterize_before_all_cases = cfg.before_all_cases;          \
+        parameterize_after_all_cases = cfg.after_all_cases;            \
+    }                                                                  \
+    void name##_runner(void)                                           \
+    {                                                                  \
+        for (int i = 0; i < case_count; i++) {                         \
+            TestConfig param_cfg = {                                   \
+                .filename = __FILE__,                                  \
+                .line = __LINE__,                                      \
+                .test_title = #name,                                   \
+                .param_test = name##_impl_wrapper,                     \
+                .param_index = i,                                      \
+                __VA_ARGS__                                            \
+            };                                                         \
+            struct name##_type* test_case = &name##_data[i];           \
+            global_param_context.case_data = (void*)&test_case->data;  \
+            global_param_context.case_name = test_case->case_name;     \
+            attester(param_cfg);                                       \
+        }                                                              \
+    }                                                                  \
+    static void __attribute__((constructor))                           \
+    register_##name##_runner(void)                                     \
+    {                                                                  \
+        static TestConfig test_config = {                              \
+            .filename = __FILE__,                                      \
+            .line = __LINE__,                                          \
+            .test_title = #name,                                       \
+            .param_test_runner = name##_runner,                        \
+            .param_init = name##_init,                                 \
+        };                                                             \
+        attest_update_registry(&test_config);                          \
+    }                                                                  \
+    void name##_impl_wrapper(TestConfig cfg)                           \
+    {                                                                  \
+        name##_impl(name##_data[cfg.param_index].data);                \
+    }                                                                  \
     void name##_impl(param_type param_var)
 
 #define PARAM_TEST_CTX(name,                                                \
     context, param_type, param_var, values_group, ...)                      \
     void name##_impl(ParamContext* context, param_type param_var);          \
     void name##_impl_wrapper(TestConfig cfg);                               \
-    static const param_type name##_data[] = {                               \
-        STRIP_PARENS(values_group)                                          \
-    };                                                                      \
+    struct name##_type {                                               \
+        param_type data;                                               \
+        char case_name[ATTEST_MAX_CASE_TITLE_SIZE];                    \
+    };                                                                 \
+    static struct name##_type name##_data[] = {                        \
+        STRIP_PARENS(values_group)                                     \
+    };                                                                 \
                                                                             \
     void name##_init(void)                                                  \
     {                                                                       \
         TestConfig cfg = { __VA_ARGS__ };                                   \
-        test_instance_count = sizeof(name##_data) / sizeof(param_type);     \
+        case_count = sizeof(name##_data) / sizeof(struct name##_type); \
         parameterize_before_all_cases = cfg.before_all_cases;               \
         parameterize_after_all_cases = cfg.after_all_cases;                 \
     }                                                                       \
     void name##_runner(void)                                                \
     {                                                                       \
-        for (int i = 0; i < test_instance_count; i++) {                     \
+        for (int i = 0; i < case_count; i++) {                              \
             TestConfig param_cfg = {                                        \
                 .filename = __FILE__,                                       \
                 .line = __LINE__,                                           \
@@ -799,8 +925,10 @@ int main(void)
                 .param_index = i,                                           \
                 __VA_ARGS__                                                 \
             };                                                              \
-            global_param_context.case_data = (void*)&name##_data[i];        \
-            attester(param_cfg);                                            \
+            struct name##_type* test_case = &name##_data[i];           \
+            global_param_context.case_data = (void*)&test_case->data;  \
+            global_param_context.case_name = test_case->case_name;     \
+            attester(param_cfg);                                       \
         }                                                                   \
     }                                                                       \
     static void __attribute__((constructor)) register_##name##_runner(void) \
@@ -816,7 +944,8 @@ int main(void)
     }                                                                       \
     void name##_impl_wrapper(TestConfig cfg)                                \
     {                                                                       \
-        name##_impl(&global_param_context, name##_data[cfg.param_index]);   \
+        /* TODO: pass a copy of global_param_context */                     \
+        name##_impl(&global_param_context, name##_data[cfg.param_index].data);   \
     }                                                                       \
     void name##_impl(ParamContext* context, param_type param_var)
 
