@@ -15,8 +15,8 @@
 #define ATTEST_MAX_TESTS 128
 #endif
 
-#ifndef ATTEST_MAX_CASE_TITLE_SIZE
-#define ATTEST_MAX_CASE_TITLE_SIZE 128
+#ifndef ATTEST_CASE_NAME_SIZE
+#define ATTEST_CASE_NAME_SIZE 128
 #endif
 //
 // Default max failures for a parameterize test
@@ -27,6 +27,16 @@
 // Max buffer size to represent values
 #ifndef ATTEST_VALUE_BUF
 #define ATTEST_VALUE_BUF 128
+#endif
+
+// Max amount of attempts
+#ifndef ATTEST_MAX_TEST_ATTEMPTS
+#define ATTEST_MAX_TEST_ATTEMPTS 32
+#endif
+//
+// Max amount of attempts
+#ifndef ATTEST_MAX_FAILURES
+#define ATTEST_MAX_FAILURES 16
 #endif
 
 #ifdef ATTEST_NO_COLOR
@@ -90,7 +100,6 @@ typedef enum {
 typedef struct TestConfig {
     char* filename;
     int line;
-    char* group_title;
     char* test_title;
     bool skip;
     bool disabled;
@@ -133,7 +142,14 @@ typedef struct
     bool has_expected_value;
     char expected_label[ATTEST_VALUE_BUF];
     char expected_value[ATTEST_VALUE_BUF];
+    char reason[ATTEST_VALUE_BUF];
 } FailureInfo;
+
+typedef struct
+{
+    FailureInfo failures[ATTEST_MAX_FAILURES];
+    size_t count;
+} FailureList;
 
 // TODO: standarize instance noun to case
 typedef struct
@@ -155,6 +171,12 @@ typedef struct
     void* global_shared_data;
 } AttestContext;
 
+void display_failures(int test_attempt, char* failure_report_preamble);
+void report_summary();
+bool has_status(Status target_status, const Status* statuses, int status_count);
+bool any_instance(Status status);
+bool every_instance(Status status);
+
 /**************************
  * GLOBALS
  *************************/
@@ -167,13 +189,13 @@ static int case_count = 0;
 
 static TestConfig* attest_registry_head = NULL;
 
-char* failed_test_titles[ATTEST_MAX_TESTS];
-char* failed_group_titles[ATTEST_MAX_TESTS];
-
-char* empty_test_titles[ATTEST_MAX_TESTS];
-char* empty_group_titles[ATTEST_MAX_TESTS];
+FailureList failed_assertions_per_attempt[ATTEST_MAX_TEST_ATTEMPTS];
+// FailureInfo failed_verifications[ATTEST_MAX_TESTS];
+int test_attempt_count = 0;
+// int failed_verification_count = 0;
 
 InstanceResult parameterize_instance_results[ATTEST_MAX_TESTS];
+
 static void (*parameterize_before_all_cases)(ParamContext* param_ctx);
 static void (*parameterize_after_all_cases)(ParamContext* param_ctx);
 
@@ -193,18 +215,25 @@ static AttestContext attest_context = {
 static ParamContext global_param_context;
 
 /**************************
- * RUNNER
+ * ENGINES
  *************************/
 
-bool is_duplicate_title(char* subject)
+void attest_update_registry(TestConfig* test_config)
 {
-    for (int i = 0; i < fail_count; i++) {
-        if (strcmp(subject, failed_test_titles[i]) == 0) {
-            return true;
-        }
+    if (attest_registry_head == NULL) {
+        test_config->next = NULL;
+        attest_registry_head = test_config;
+        return;
     }
 
-    return false;
+    TestConfig* pointer = attest_registry_head;
+
+    while (pointer->next != NULL) {
+        pointer = pointer->next;
+    }
+
+    pointer->next = test_config;
+    test_config->next = NULL;
 }
 
 void attester(TestConfig cfg)
@@ -221,29 +250,15 @@ void attester(TestConfig cfg)
 
     bool is_param_test = cfg.param_test != NULL;
 
-    if (cfg.disabled) {
-        return;
-    }
-
     if (cfg.skip) {
         skip_count += 1;
-        total_tests++;
         return;
     }
 
+    test_attempt_count = 0;
     int max_attempts = cfg.attempts ? cfg.attempts : 1;
+    Status statuses[ATTEST_MAX_TEST_ATTEMPTS];
 
-    if (cfg.attempts > 0) {
-        printf(
-            "%s[RUN]%s %s%s%s\n",
-            MAGENTA, NORMAL, BOLD_WHITE,
-            attest_internal_current_test->test_title,
-            NORMAL);
-    }
-
-    if (!cfg.param_test) {
-        total_tests++;
-    }
     for (
         cfg.attempt_count = 0;
         cfg.attempt_count < max_attempts;
@@ -306,190 +321,87 @@ void attester(TestConfig cfg)
             attest_after_each_handler(&context);
         }
 
+        statuses[test_attempt_count] = cfg.status;
+        test_attempt_count++;
         if (cfg.status == PASSED || cfg.status == MISSING_EXPECTATION) {
             break;
         }
     }
 
+    if (test_attempt_count > max_attempts) {
+        fprintf(stderr, "%s[ATTEST ERROR] Reach invalid state concerning test attempts. Print debug logs and file issue.%s\n", RED, NORMAL);
+        exit(1); // NOLINT
+    }
+
+    if (is_param_test && cfg.status == MISSING_EXPECTATION) {
+        InstanceResult instance_result = { .status = MISSING_EXPECTATION };
+        parameterize_instance_results[cfg.param_index] = instance_result;
+    }
+
+    if (is_param_test) {
+        return;
+    }
+
+    bool an_attempt_is_missing_verification = has_status(
+        MISSING_EXPECTATION,
+        statuses,
+        test_attempt_count);
+
+    if (an_attempt_is_missing_verification) {
+        cfg.status = MISSING_EXPECTATION;
+    }
+
     switch (cfg.status) {
     case PASSED:
-        if (!cfg.param_test) {
-            pass_count++;
-        }
-        break;
-    case FAILED:
-        if (!cfg.param_test) {
-            if (fail_count >= ATTEST_MAX_TESTS) {
-                // NOLINTNEXTLINE
-                fprintf(stderr,
-                    "[ERROR] Reached max allowed tests. Define MACRO "
-                    "ATTEST_MAX_TESTS to higher limit");
-                exit(1); // NOLINT
-            }
-            failed_test_titles[fail_count] = cfg.test_title;
-            failed_group_titles[fail_count] = cfg.group_title;
-            fail_count++;
-        }
+        pass_count++;
         break;
     case MISSING_EXPECTATION:
-        if (cfg.param_test) {
-            InstanceResult instance_result = { .status = MISSING_EXPECTATION };
-            parameterize_instance_results[cfg.param_index] = instance_result;
-        } else {
-            printf(
-                "%s[MISSING ASSERTION]%s %s%s%s\n",
-                MAGENTA,
-                NORMAL,
-                BOLD_WHITE,
-                attest_internal_current_test->test_title,
-                NORMAL);
-            printf("%s Location:%s %s%s:%d%s\n\n",
-                CYAN, NORMAL, GRAY, cfg.filename,
-                cfg.line,
-                NORMAL);
-            empty_count++;
+        empty_count++;
+        printf(
+            "%s[MISSING ASSERTION]%s %s%s%s\n",
+            MAGENTA,
+            NORMAL,
+            BOLD_WHITE,
+            attest_internal_current_test->test_title,
+            NORMAL);
+        printf("%s Location:%s %s%s:%d%s\n\n",
+            CYAN, NORMAL, GRAY, cfg.filename,
+            cfg.line,
+            NORMAL);
+        break;
+    case FAILED:
+        fail_count++;
+        printf(
+            "%s[FAIL]%s %s%s%s\n",
+            RED, NORMAL, BOLD_WHITE,
+            cfg.test_title,
+            NORMAL);
+        bool more_than_one_attempt = test_attempt_count > 1;
+        for (int i = 0; i < test_attempt_count; i++) {
+            bool is_last_attempt = i == test_attempt_count - 1;
+
+            if (more_than_one_attempt) {
+                printf("%s%s%sTest attempt: %d\n",
+                    GRAY,
+                    is_last_attempt ? LEAF : BRANCH,
+                    NORMAL,
+                    i + 1);
+            }
+
+            if (more_than_one_attempt) {
+                display_failures(
+                    i,
+                    is_last_attempt
+                        ? "   "
+                        : TRUNK "   ");
+            } else {
+                display_failures(i, "");
+            }
         }
         break;
     default:
         fprintf(stderr, "%s[ATTEST ERROR] Reach unreachable state. Print debug logs and file issue%s\n", RED, NORMAL);
     }
-}
-
-void attest_update_registry(TestConfig* test_config)
-{
-    if (attest_registry_head == NULL) {
-        test_config->next = NULL;
-        attest_registry_head = test_config;
-        return;
-    }
-
-    TestConfig* pointer = attest_registry_head;
-
-    while (pointer->next != NULL) {
-        pointer = pointer->next;
-    }
-
-    pointer->next = test_config;
-    test_config->next = NULL;
-}
-
-/**************************
- * REPORTERS
- *************************/
-
-void report_success()
-{
-    TestConfig* current_test = attest_internal_current_test;
-
-    current_test->status = PASSED;
-
-    if (current_test->attempts > 0) {
-        printf(
-            "%s ->%s %sAttempt %d:%s %sPassed%s\n",
-            GRAY, NORMAL, CYAN,
-            current_test->attempt_count + 1,
-            NORMAL,
-            GREEN,
-            NORMAL);
-    } else if (current_test->param_test && !parameterize_instance_results[current_test->param_index].has_status) {
-        parameterize_instance_results[current_test->param_index] = (InstanceResult) {
-            .case_name = global_param_context.case_name,
-            .has_status = true,
-            .status = PASSED
-        };
-    }
-}
-
-void report_failed_expectation(FailureInfo failure_info)
-{
-    attest_internal_current_test->status = FAILED;
-
-    printf(
-        "%s[Failed] %s%s%s\n",
-        RED,
-        BOLD_WHITE,
-        attest_internal_current_test->test_title, NORMAL);
-
-    if (failure_info.has_msg) {
-        printf("%s Message: %s%s\n",
-            CYAN, NORMAL, failure_info.msg);
-    }
-
-    printf("%s Expectation: %s%s\n",
-        CYAN, NORMAL, failure_info.verification_text);
-
-    printf("%s Values: %s\n", CYAN, NORMAL);
-
-    printf("%s   %s%s = %s\n",
-        CYAN, failure_info.actual_label, NORMAL, failure_info.actual_value);
-
-    if (failure_info.has_expected_value) {
-        printf("%s   %s%s = %s\n",
-            CYAN, failure_info.expected_label, NORMAL,
-            failure_info.expected_value);
-    }
-
-    printf("%s Location:%s %s%s:%d%s\n\n",
-        CYAN, NORMAL, GRAY, failure_info.filename,
-        failure_info.line, NORMAL);
-}
-
-void report_failed_attempt(FailureInfo failure_info)
-{
-    TestConfig* current_test = attest_internal_current_test;
-
-    if (current_test->attempt_count < current_test->attempts) {
-        printf(
-            "%s -> %s%sAttempt %d: %sFailed%s %s(Assertion at line %d)%s\n",
-            GRAY, NORMAL, CYAN,
-            current_test->attempt_count + 1,
-            RED, NORMAL, GRAY,
-            failure_info.line,
-            NORMAL);
-    }
-
-    if (current_test->attempt_count == current_test->attempts - 1) {
-        printf("\n");
-    }
-}
-
-void report_failure(FailureInfo failure_info)
-{
-    attest_internal_current_test->status = FAILED;
-
-    // TODO: cleanup
-    if (attest_internal_current_test->param_test) {
-        InstanceResult* case_result = &parameterize_instance_results[attest_internal_current_test->param_index];
-        case_result->has_status = true;
-        case_result->case_name = global_param_context.case_name;
-        case_result->status = FAILED;
-        case_result->failures[case_result->failure_count] = failure_info;
-        case_result->failure_count++;
-    } else if (attest_internal_current_test->attempts == 0) {
-        report_failed_expectation(failure_info);
-    } else {
-        report_failed_attempt(failure_info);
-    }
-}
-
-bool any_instance(Status status)
-{
-    for (int i = 0; i < case_count; i++) {
-        if (parameterize_instance_results[i].status == status) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool every_instance(Status status)
-{
-    for (int i = 0; i < case_count; i++) {
-        if (parameterize_instance_results[i].status != status) {
-            return false;
-        }
-    }
-    return true;
 }
 
 void run_parameterize_test(TestConfig* test_config)
@@ -508,8 +420,6 @@ void run_parameterize_test(TestConfig* test_config)
     }
 
     test_config->param_test_runner();
-
-    total_tests++;
 
     bool empty_tests_are_present = any_instance(MISSING_EXPECTATION);
 
@@ -531,7 +441,6 @@ void run_parameterize_test(TestConfig* test_config)
             CYAN, NORMAL, GRAY, test_config->filename,
             test_config->line, NORMAL);
     } else {
-        failed_test_titles[fail_count] = test_config->test_title;
         fail_count++;
 
         int amount_of_passed_cases = 0;
@@ -568,7 +477,7 @@ void run_parameterize_test(TestConfig* test_config)
         }
 
         printf(
-            "%s[FAILED]%s %s%s%s (%d/%d passed)\n",
+            "%s[FAIL]%s %s%s%s (%d/%d passed)\n",
             RED, NORMAL, BOLD_WHITE,
             test_config->test_title,
             NORMAL,
@@ -675,47 +584,37 @@ void run_parameterize_test(TestConfig* test_config)
     memset(parameterize_instance_results, 0, sizeof(InstanceResult) * ATTEST_MAX_TESTS);
 }
 
-void report_summary()
-{
-    printf("%s==============Test Summary==============%s\n", MAGENTA, NORMAL);
-    printf("%s  Total:          %d%s\n", MAGENTA, total_tests, NORMAL);
-    printf("%s  Passed:         %d%s\n", GREEN, pass_count, NORMAL);
-    printf("%s  Skipped:        %d%s\n", YELLOW, skip_count, NORMAL);
-    printf("%s  Failed:         %d%s\n", RED, fail_count, NORMAL);
-
-    if (empty_count) {
-        printf("%s  No assertions:  %d%s\n", CYAN, empty_count, NORMAL);
-    }
-
-    exit(fail_count || empty_count ? 1 : 0); // NOLINT
-}
-
-/**************************
- * REPORTERS
- *************************/
-
 int main(void)
 {
-    GlobalContext global_context = { .shared = NULL };
-
-    if (attest_before_all_handler) {
-        attest_before_all_handler(&global_context);
-
-        if (global_context.shared != NULL) {
-            attest_context.global_shared_data = global_context.shared;
-        }
-    }
-
     char* test_titles[ATTEST_MAX_TESTS];
     int test_count = 0;
     TestConfig* test_config = attest_registry_head;
 
     while (test_config) {
+        if (test_count == ATTEST_MAX_TESTS) {
+            fprintf(stderr,
+                "[ERROR] Reached max allowed tests. Define MACRO "
+                "ATTEST_MAX_TESTS to higher limit");
+            exit(1);
+        }
+
         if (test_config->attempts < 0) {
             fprintf(
                 stderr,
                 "%s[ERROR] `attempts` need to be positive. Location: %s:%d%s\n",
                 RED,
+                test_config->filename,
+                test_config->line,
+                NORMAL);
+            exit(1); // NOLINT
+        }
+
+        if (test_config->attempts > ATTEST_MAX_TEST_ATTEMPTS) {
+            fprintf(
+                stderr,
+                "%s[ERROR] `attempts` need to be less than or equal to %d. Location: %s:%d%s\n",
+                RED,
+                ATTEST_MAX_TEST_ATTEMPTS,
                 test_config->filename,
                 test_config->line,
                 NORMAL);
@@ -755,14 +654,35 @@ int main(void)
         test_config = test_config->next;
     }
 
+    GlobalContext global_context = { .shared = NULL };
+
+    if (attest_before_all_handler) {
+        attest_before_all_handler(&global_context);
+
+        if (global_context.shared != NULL) {
+            attest_context.global_shared_data = global_context.shared;
+        }
+    }
+
     test_config = attest_registry_head;
 
+    // TODO: Discover behavior of a parameterize test with > 1 attempts sets.
     while (test_config) {
+        if (test_config->disabled) {
+            test_config = test_config->next;
+            continue;
+        }
+
         if (test_config->param_test_runner) {
             run_parameterize_test(test_config);
         } else {
             attester(*test_config);
         }
+
+        memset(failed_assertions_per_attempt, 0, sizeof failed_assertions_per_attempt);
+        // failed_verification_count = 0;
+
+        total_tests++;
 
         test_config = test_config->next;
     }
@@ -774,6 +694,174 @@ int main(void)
     report_summary();
 
     return 0;
+}
+
+/**************************
+ * REPORTERS
+ *************************/
+void display_failures(int test_attempt, char* failure_report_preamble)
+{
+    FailureList* failure_list = &failed_assertions_per_attempt[test_attempt];
+
+    for (size_t i = 0; i < failure_list->count; i++) {
+        FailureInfo* failure_info = &failure_list->failures[i];
+        bool is_last_failed_verification = i == failure_list->count - 1;
+        char* verification_preamble = is_last_failed_verification ? LEAF : BRANCH;
+
+        printf("%s%s%s%s %s@L%d: %s\n",
+            GRAY, failure_report_preamble, verification_preamble, NORMAL,
+            failure_info->filename, failure_info->line,
+            failure_info->verification_text);
+
+        char detail_preamble[7];
+        snprintf(detail_preamble, 7, "%s",
+            is_last_failed_verification ? "    " : TRUNK "  ");
+
+        bool actual_has_label = strcmp(failure_info->actual_label, failure_info->actual_value) != 0;
+        if (failure_info->has_expected_value) {
+
+            bool expected_has_label = strcmp(failure_info->expected_label, failure_info->expected_value) != 0;
+
+            if (actual_has_label) {
+                printf("%s%s%s%s %s = %s\n",
+                    GRAY, failure_report_preamble, detail_preamble, NORMAL,
+                    failure_info->actual_label, failure_info->actual_value);
+            }
+
+            if (expected_has_label) {
+                printf("%s%s%s%s %s = %s\n",
+                    GRAY, failure_report_preamble, detail_preamble, NORMAL,
+                    failure_info->expected_label, failure_info->expected_value);
+            }
+        } else {
+            if (actual_has_label) {
+                printf("%s%s%s%sActual: %s = %s\n",
+                    GRAY, failure_report_preamble, detail_preamble, NORMAL,
+                    failure_info->actual_label, failure_info->actual_value);
+            }
+
+            printf("%s%s%s%sReason: %s\n",
+                GRAY, failure_report_preamble, detail_preamble, NORMAL,
+                failure_info->reason);
+        }
+
+        if (failure_info->has_msg) {
+            printf("%s%s%s%sMessage: %s\n",
+                GRAY, failure_report_preamble, detail_preamble, NORMAL,
+                failure_info->msg);
+        }
+
+        printf("%s%s%s%s\n", GRAY, failure_report_preamble, detail_preamble, NORMAL);
+    }
+}
+
+void report_summary()
+{
+    printf("%s==============Test Summary==============%s\n", MAGENTA, NORMAL);
+    printf("%s  Total:          %d%s\n", MAGENTA, total_tests, NORMAL);
+    printf("%s  Passed:         %d%s\n", GREEN, pass_count, NORMAL);
+    printf("%s  Skipped:        %d%s\n", YELLOW, skip_count, NORMAL);
+    printf("%s  Failed:         %d%s\n", RED, fail_count, NORMAL);
+
+    if (empty_count) {
+        printf("%s  No assertions:  %d%s\n", CYAN, empty_count, NORMAL);
+    }
+
+    exit(fail_count || empty_count ? 1 : 0); // NOLINT
+}
+
+void report_success()
+{
+    TestConfig* current_test = attest_internal_current_test;
+
+    current_test->status = PASSED;
+
+    if (current_test->attempts > 0) {
+        printf(
+            "%s ->%s %sAttempt %d:%s %sPassed%s\n",
+            GRAY, NORMAL, CYAN,
+            current_test->attempt_count + 1,
+            NORMAL,
+            GREEN,
+            NORMAL);
+    } else if (current_test->param_test && !parameterize_instance_results[current_test->param_index].has_status) {
+        parameterize_instance_results[current_test->param_index] = (InstanceResult) {
+            .case_name = global_param_context.case_name,
+            .has_status = true,
+            .status = PASSED
+        };
+    }
+}
+
+void report_failed_attempt(FailureInfo failure_info)
+{
+    TestConfig* current_test = attest_internal_current_test;
+
+    if (current_test->attempt_count < current_test->attempts) {
+        printf(
+            "%s -> %s%sAttempt %d: %sFailed%s %s(Assertion at line %d)%s\n",
+            GRAY, NORMAL, CYAN,
+            current_test->attempt_count + 1,
+            RED, NORMAL, GRAY,
+            failure_info.line,
+            NORMAL);
+    }
+
+    if (current_test->attempt_count == current_test->attempts - 1) {
+        printf("\n");
+    }
+}
+
+void report_failure(FailureInfo failure_info)
+{
+    attest_internal_current_test->status = FAILED;
+
+    if (attest_internal_current_test->param_test) {
+        InstanceResult* case_result = &parameterize_instance_results[attest_internal_current_test->param_index];
+        case_result->has_status = true;
+        case_result->case_name = global_param_context.case_name;
+        case_result->status = FAILED;
+        case_result->failures[case_result->failure_count] = failure_info;
+        case_result->failure_count++;
+    } else {
+        FailureList* failure_list = &failed_assertions_per_attempt[test_attempt_count];
+        failure_list->failures[failure_list->count] = failure_info;
+        failure_list->count++;
+    }
+}
+
+/**************************
+ * UTILITIES
+ *************************/
+
+bool has_status(Status target_status, const Status* statuses, int status_count)
+{
+    for (int i = 0; i < status_count; i++) {
+        if (statuses[i] == target_status) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool any_instance(Status status)
+{
+    for (int i = 0; i < case_count; i++) {
+        if (parameterize_instance_results[i].status == status) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool every_instance(Status status)
+{
+    for (int i = 0; i < case_count; i++) {
+        if (parameterize_instance_results[i].status != status) {
+            return false;
+        }
+    }
+    return true;
 }
 
 /**************************
@@ -848,57 +936,56 @@ int main(void)
 #define UNWRAP(...) __VA_ARGS__
 #define STRIP_PARENS(x) UNWRAP x
 
-#define PARAM_TEST(title, param_type, param_var, values_group, ...)      \
-    void title##_impl(param_type param_var);                             \
-    void title##_impl_wrapper(TestConfig cfg);                           \
-    struct title##_type {                                                \
-        param_type data;                                                 \
-        char name[ATTEST_MAX_CASE_TITLE_SIZE];                           \
-    };                                                                   \
-    static struct title##_type title##_data[] = {                        \
-        STRIP_PARENS(values_group)                                       \
-    };                                                                   \
-                                                                         \
-    void title##_init(void)                                              \
-    {                                                                    \
-        TestConfig cfg = { __VA_ARGS__ };                                \
-        case_count = sizeof(title##_data) / sizeof(struct title##_type); \
-        parameterize_before_all_cases = cfg.before_all_cases;            \
-        parameterize_after_all_cases = cfg.after_all_cases;              \
-    }                                                                    \
-    void title##_runner(void)                                            \
-    {                                                                    \
-        for (int i = 0; i < case_count; i++) {                           \
-            TestConfig param_cfg = {                                     \
-                .filename = __FILE__,                                    \
-                .line = __LINE__,                                        \
-                .test_title = #title,                                    \
-                .param_test = title##_impl_wrapper,                      \
-                .param_index = i,                                        \
-                __VA_ARGS__                                              \
-            };                                                           \
-            struct title##_type* test_case = &title##_data[i];           \
-            global_param_context.case_data = (void*)&test_case->data;    \
-            global_param_context.case_name = test_case->name;            \
-            attester(param_cfg);                                         \
-        }                                                                \
-    }                                                                    \
-    static void __attribute__((constructor))                             \
-    register_##title##_runner(void)                                      \
-    {                                                                    \
-        static TestConfig test_config = {                                \
-            .filename = __FILE__,                                        \
-            .line = __LINE__,                                            \
-            .test_title = #title,                                        \
-            .param_test_runner = title##_runner,                         \
-            .param_init = title##_init,                                  \
-        };                                                               \
-        attest_update_registry(&test_config);                            \
-    }                                                                    \
-    void title##_impl_wrapper(TestConfig cfg)                            \
-    {                                                                    \
-        title##_impl(title##_data[cfg.param_index].data);                \
-    }                                                                    \
+#define PARAM_TEST(title, param_type, param_var, values_group, ...)          \
+    void title##_impl(param_type param_var);                                 \
+    void title##_impl_wrapper(TestConfig cfg);                               \
+    struct title##_type {                                                    \
+        param_type data;                                                     \
+        char name[ATTEST_CASE_NAME_SIZE];                                    \
+    };                                                                       \
+    static struct title##_type title##_data[] = {                            \
+        STRIP_PARENS(values_group)                                           \
+    };                                                                       \
+                                                                             \
+    void title##_init(void)                                                  \
+    {                                                                        \
+        TestConfig cfg = { __VA_ARGS__ };                                    \
+        case_count = sizeof(title##_data) / sizeof(struct title##_type);     \
+        parameterize_before_all_cases = cfg.before_all_cases;                \
+        parameterize_after_all_cases = cfg.after_all_cases;                  \
+    }                                                                        \
+    void title##_runner(void)                                                \
+    {                                                                        \
+        for (int i = 0; i < case_count; i++) {                               \
+            TestConfig param_cfg = {                                         \
+                .filename = __FILE__,                                        \
+                .line = __LINE__,                                            \
+                .test_title = #title,                                        \
+                .param_test = title##_impl_wrapper,                          \
+                .param_index = i,                                            \
+                __VA_ARGS__                                                  \
+            };                                                               \
+            struct title##_type* test_case = &title##_data[i];               \
+            global_param_context.case_data = (void*)&test_case->data;        \
+            global_param_context.case_name = test_case->name;                \
+            attester(param_cfg);                                             \
+        }                                                                    \
+    }                                                                        \
+    static void __attribute__((constructor)) register_##title##_runner(void) \
+    {                                                                        \
+        static TestConfig test_config = {                                    \
+            .filename = __FILE__,                                            \
+            .line = __LINE__,                                                \
+            .test_title = #title,                                            \
+            .param_test_runner = title##_runner,                             \
+            .param_init = title##_init,                                      \
+        };                                                                   \
+        attest_update_registry(&test_config);                                \
+    }                                                                        \
+    void title##_impl_wrapper(TestConfig cfg)                                \
+    {                                                                        \
+        title##_impl(title##_data[cfg.param_index].data);                    \
+    }                                                                        \
     void title##_impl(param_type param_var)
 
 #define PARAM_TEST_CTX(title,                                                    \
@@ -907,7 +994,7 @@ int main(void)
     void title##_impl_wrapper(TestConfig cfg);                                   \
     struct title##_type {                                                        \
         param_type data;                                                         \
-        char name[ATTEST_MAX_CASE_TITLE_SIZE];                                   \
+        char name[ATTEST_CASE_NAME_SIZE];                                        \
     };                                                                           \
     static struct title##_type title##_data[] = {                                \
         STRIP_PARENS(values_group)                                               \
@@ -1055,38 +1142,41 @@ int main(void)
         }                                                        \
     }
 
-#define SAVE_ONE_VALUE(format, x, ...)                \
-    failure_info.has_expected_value = false;          \
-    int actual_label_size = snprintf(                 \
-        NULL,                                         \
-        0,                                            \
-        "%s",                                         \
-        #x);                                          \
-    if (actual_label_size > 0) {                      \
-        if (actual_label_size < ATTEST_VALUE_BUF) {   \
-            (void)snprintf(failure_info.actual_label, \
-                ATTEST_VALUE_BUF,                     \
-                "%s",                                 \
-                #x);                                  \
-        } else {                                      \
-            (void)sprintf(failure_info.actual_label,  \
-                "(truncated)");                       \
-        }                                             \
-    }                                                 \
-    int actual_value_size = snprintf(                 \
-        NULL,                                         \
-        0,                                            \
-        UNGROUP format(x));                           \
-    if (actual_value_size > 0) {                      \
-        if (actual_value_size < ATTEST_VALUE_BUF) {   \
-            (void)snprintf(failure_info.actual_value, \
-                ATTEST_VALUE_BUF,                     \
-                UNGROUP format(x));                   \
-        } else {                                      \
-            (void)sprintf(failure_info.actual_value,  \
-                "(truncated)");                       \
-        }                                             \
-    }
+#define SAVE_ONE_VALUE(format, failure_reason, x, ...) \
+    failure_info.has_expected_value = false;           \
+    int actual_label_size = snprintf(                  \
+        NULL,                                          \
+        0,                                             \
+        "%s",                                          \
+        #x);                                           \
+    if (actual_label_size > 0) {                       \
+        if (actual_label_size < ATTEST_VALUE_BUF) {    \
+            (void)snprintf(failure_info.actual_label,  \
+                ATTEST_VALUE_BUF,                      \
+                "%s",                                  \
+                #x);                                   \
+        } else {                                       \
+            (void)sprintf(failure_info.actual_label,   \
+                "(truncated)");                        \
+        }                                              \
+    }                                                  \
+    int actual_value_size = snprintf(                  \
+        NULL,                                          \
+        0,                                             \
+        UNGROUP format(x));                            \
+    if (actual_value_size > 0) {                       \
+        if (actual_value_size < ATTEST_VALUE_BUF) {    \
+            (void)snprintf(failure_info.actual_value,  \
+                ATTEST_VALUE_BUF,                      \
+                UNGROUP format(x));                    \
+        } else {                                       \
+            (void)sprintf(failure_info.actual_value,   \
+                "(truncated)");                        \
+        }                                              \
+    }                                                  \
+    (void)snprintf(failure_info.reason,                \
+        ATTEST_VALUE_BUF,                              \
+        failure_reason);
 
 #define SAVE_TWO_VALUE(format, x, y, ...)               \
     failure_info.has_expected_value = true;             \
@@ -1156,14 +1246,14 @@ int main(void)
         PICK_ONE_FOR_CONDITION(__VA_ARGS__),                 \
         MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__),               \
         COLLECT_ONE_VERIFICATION_TOKEN(EXPECT, __VA_ARGS__), \
-        SAVE_ONE_VALUE(("%d", ), __VA_ARGS__))
+        SAVE_ONE_VALUE(("%d", ), "Condition must be TRUE", __VA_ARGS__))
 
 #define EXPECT_FALSE(...)                                          \
     ATTEST_EXPECT(                                                 \
         !(PICK_ONE_FOR_CONDITION(__VA_ARGS__)),                    \
         MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__),                     \
         COLLECT_ONE_VERIFICATION_TOKEN(EXPECT_FALSE, __VA_ARGS__), \
-        SAVE_ONE_VALUE(("%d", ), __VA_ARGS__))
+        SAVE_ONE_VALUE(("%d", ), "Condition must be FALSE", __VA_ARGS__))
 
 #define EXPECT_EQ(...)                                           \
     ATTEST_EXPECT(                                               \
@@ -1244,14 +1334,14 @@ int main(void)
         IS_NULL(__VA_ARGS__),                                     \
         MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__),                    \
         COLLECT_ONE_VERIFICATION_TOKEN(EXPECT_NULL, __VA_ARGS__), \
-        SAVE_ONE_VALUE(("%p", (void*)), __VA_ARGS__))
+        SAVE_ONE_VALUE(("%p", (void*)), "Pointer must be NULL", __VA_ARGS__))
 
 #define EXPECT_NOT_NULL(...)                                          \
     ATTEST_EXPECT(                                                    \
         !(IS_NULL(__VA_ARGS__)),                                      \
         MSG_DISPATCH_FOR_ONE_ARG(__VA_ARGS__),                        \
         COLLECT_ONE_VERIFICATION_TOKEN(EXPECT_NOT_NULL, __VA_ARGS__), \
-        SAVE_ONE_VALUE(("%p", (void*)), __VA_ARGS__))
+        SAVE_ONE_VALUE(("%p", (void*)), "Pointer must not be NULL", __VA_ARGS__))
 
 #define EXPECT_SAME_PTR(...)                                           \
     ATTEST_EXPECT(                                                     \
