@@ -34,9 +34,19 @@
 #define ATTEST_MAX_TEST_ATTEMPTS 32
 #endif
 //
-// Max amount of attempts
+// Max amount of failed verifications per test
 #ifndef ATTEST_MAX_FAILURES
 #define ATTEST_MAX_FAILURES 16
+#endif
+
+// Max amount of tags
+#ifndef ATTEST_MAX_TAGS
+#define ATTEST_MAX_TAGS 8
+#endif
+
+// Max amount of tags
+#ifndef ATTEST_MAX_TAG_SIZE
+#define ATTEST_MAX_TAG_SIZE 21
 #endif
 
 #ifdef ATTEST_NO_COLOR
@@ -48,6 +58,7 @@
 #define YELLOW ""
 #define GRAY ""
 #define BOLD_WHITE ""
+#define BOLD_RED ""
 #else
 #define RED "\x1b[31m"
 #define NORMAL "\x1b[0m"
@@ -57,6 +68,7 @@
 #define YELLOW "\x1b[33m"
 #define GRAY "\x1b[2m"
 #define BOLD_WHITE "\x1b[1;97m"
+#define BOLD_RED "\x1b[1;31m"
 #endif
 
 #ifdef ATTEST_NO_UTF8
@@ -118,7 +130,7 @@ typedef struct TestConfig {
     struct TestConfig* next;
     int attempt_count;
     int param_index;
-    char* tags[10];
+    char* tags[ATTEST_MAX_TAGS + 1];
     Status status;
 } TestConfig;
 
@@ -169,6 +181,8 @@ typedef struct
 typedef struct
 {
     void* global_shared_data;
+    char requested_tags[ATTEST_MAX_TAGS][ATTEST_MAX_TAG_SIZE];
+    int requested_tag_count;
 } AttestContext;
 
 void display_failures(int test_attempt, char* failure_report_preamble);
@@ -209,7 +223,9 @@ static void (*attest_after_all_handler)(GlobalContext* global_ctx);
 static void (*attest_after_each_handler)(TestContext* global_ctx);
 
 static AttestContext attest_context = {
-    .global_shared_data = NULL
+    .global_shared_data = NULL,
+    .requested_tags = {},
+    .requested_tag_count = 0
 };
 
 static ParamContext global_param_context;
@@ -381,11 +397,11 @@ void attester(TestConfig cfg)
             bool is_last_attempt = i == test_attempt_count - 1;
 
             if (more_than_one_attempt) {
-                printf("%s%s%sTest attempt: %d\n",
+                printf("%s%sTest attempt: %d%s\n",
                     GRAY,
                     is_last_attempt ? LEAF : BRANCH,
-                    NORMAL,
-                    i + 1);
+                    i + 1,
+                    NORMAL);
             }
 
             if (more_than_one_attempt) {
@@ -393,7 +409,7 @@ void attester(TestConfig cfg)
                     i,
                     is_last_attempt
                         ? "   "
-                        : TRUNK "   ");
+                        : TRUNK "  ");
             } else {
                 display_failures(i, "");
             }
@@ -443,14 +459,12 @@ void run_parameterize_test(TestConfig* test_config)
     } else {
         fail_count++;
 
-        int amount_of_passed_cases = 0;
         int amount_of_failed_cases = 0;
         InstanceResult* failed_cases[ATTEST_MAX_TESTS];
 
         for (int i = 0; i < case_count; i++) {
             switch (parameterize_instance_results[i].status) {
             case PASSED:
-                amount_of_passed_cases++;
                 break;
             case FAILED:
                 failed_cases[amount_of_failed_cases] = &parameterize_instance_results[i];
@@ -477,11 +491,11 @@ void run_parameterize_test(TestConfig* test_config)
         }
 
         printf(
-            "%s[FAIL]%s %s%s%s (%d/%d passed)\n",
-            RED, NORMAL, BOLD_WHITE,
+            "%s[FAIL]%s %s%s%s (%s%d/%d failed%s)\n",
+            BOLD_RED, NORMAL, BOLD_WHITE,
             test_config->test_title,
             NORMAL,
-            amount_of_passed_cases, case_count);
+            RED, amount_of_failed_cases, case_count, NORMAL);
 
         printf("%s%s%s\n", GRAY, TRUNK, NORMAL);
 
@@ -490,14 +504,16 @@ void run_parameterize_test(TestConfig* test_config)
             InstanceResult* case_result = failed_cases[i];
 
             printf(
-                "%s%s Case [%d]:%s %s\n",
+                "%s%s Case [%d]:%s %s%s%s\n",
                 GRAY,
                 is_last_failed_case ? LEAF : BRANCH,
                 i + 1,
                 NORMAL,
+                RED,
                 case_result->case_name[0] == '\0'
                     ? "<unnamed>"
-                    : case_result->case_name);
+                    : case_result->case_name,
+                NORMAL);
 
             for (int j = 0; j < case_result->failure_count; j++) {
                 bool is_last_failure = j == case_result->failure_count - 1;
@@ -518,22 +534,6 @@ void run_parameterize_test(TestConfig* test_config)
                     case_failure_info.line,
                     case_failure_info.verification_text);
 
-                if (case_failure_info.has_msg) {
-                    if (is_last_failed_case) {
-                        printf("    ");
-                    } else {
-                        printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
-                    }
-
-                    if (is_last_failure) {
-                        printf("    ");
-                    } else {
-                        printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
-                    }
-
-                    printf("Message: %s\n", case_failure_info.msg);
-                }
-
                 if (case_failure_info.has_expected_value) {
                     if (is_last_failed_case) {
                         printf("    ");
@@ -547,7 +547,7 @@ void run_parameterize_test(TestConfig* test_config)
                         printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
                     }
 
-                    printf("Expected: %s%s%s\n", GREEN, case_failure_info.expected_value, NORMAL);
+                    printf("%sExpected:%s %s%s%s\n", GRAY, NORMAL, GREEN, case_failure_info.expected_value, NORMAL);
                 }
 
                 if (is_last_failed_case) {
@@ -562,7 +562,34 @@ void run_parameterize_test(TestConfig* test_config)
                     printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
                 }
 
-                printf("Actual:   %s%s%s\n", RED, case_failure_info.actual_value, NORMAL);
+                printf("%sActual:%s   %s%s%s\n", GRAY, NORMAL, RED, case_failure_info.actual_value, NORMAL);
+
+                if (case_failure_info.has_msg) {
+                    if (is_last_failed_case) {
+                        printf("    ");
+                    } else {
+                        printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
+                    }
+
+                    if (is_last_failure) {
+                        printf("    ");
+                    } else {
+                        printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
+                    }
+
+                    printf("%sMessage: %s%s\n", CYAN, case_failure_info.msg, NORMAL);
+                }
+                if (!is_last_failed_case && !is_last_failure) {
+                    printf("%s%s   %s%s\n", GRAY, TRUNK, TRUNK, NORMAL);
+                }
+
+                if (!is_last_failed_case && is_last_failure) {
+                    printf("%s%s%s   \n", GRAY, TRUNK, NORMAL);
+                }
+
+                if (is_last_failed_case && !is_last_failure) {
+                    printf("%s    %s%s\n", GRAY, TRUNK, NORMAL);
+                }
             }
         }
     }
@@ -584,11 +611,37 @@ void run_parameterize_test(TestConfig* test_config)
     memset(parameterize_instance_results, 0, sizeof(InstanceResult) * ATTEST_MAX_TESTS);
 }
 
-int main(void)
+int main(int argc, char* argv[])
 {
     char* test_titles[ATTEST_MAX_TESTS];
     int test_count = 0;
     TestConfig* test_config = attest_registry_head;
+
+    bool has_tags = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--tag") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr,
+                    "[ERROR] Please pass a tag argument to `--tag`\n");
+                exit(1);
+            }
+
+            if (attest_context.requested_tag_count == ATTEST_MAX_TAGS) {
+                fprintf(stderr,
+                    "[ERROR] Reached max amount of tags. Please define `ATTEST_MAX_TAGS` to higher limit\n");
+                exit(1);
+            }
+
+            strncpy(
+                attest_context.requested_tags[attest_context.requested_tag_count],
+                argv[i + 1],
+                20);
+
+            attest_context.requested_tags[attest_context.requested_tag_count][20] = '\0';
+            attest_context.requested_tag_count++;
+            has_tags = true;
+        }
+    }
 
     while (test_config) {
         if (test_count == ATTEST_MAX_TESTS) {
@@ -666,6 +719,8 @@ int main(void)
 
     test_config = attest_registry_head;
 
+    bool a_single_test_matched_the_tags = false;
+
     // TODO: Discover behavior of a parameterize test with > 1 attempts sets.
     while (test_config) {
         if (test_config->disabled) {
@@ -673,6 +728,28 @@ int main(void)
             continue;
         }
 
+        if (has_tags && test_config->tags[0] != NULL) {
+            bool test_has_requested_tag = false;
+
+            for (int i = 0; i < attest_context.requested_tag_count; i++) {
+                char* requested_tag = attest_context.requested_tags[i];
+                for (int j = 0; j < ATTEST_MAX_TAGS && test_config->tags[j] != NULL; j++) {
+                    char* test_tag = test_config->tags[j];
+                    if (strcmp(test_tag, requested_tag) == 0) {
+                        test_has_requested_tag = true;
+                    }
+                }
+            }
+
+            if (test_has_requested_tag) {
+                a_single_test_matched_the_tags = true;
+            } else {
+                test_config = test_config->next;
+                continue;
+            }
+        }
+
+        // printf("What is tag: %s\n", test_config->tags[9]);
         if (test_config->param_test_runner) {
             run_parameterize_test(test_config);
         } else {
@@ -685,6 +762,11 @@ int main(void)
         total_tests++;
 
         test_config = test_config->next;
+    }
+
+    if (has_tags && !a_single_test_matched_the_tags) {
+        printf("%sNo tests matched the selected tags.%s", RED, NORMAL);
+        exit(1);
     }
 
     if (attest_after_all_handler) {
@@ -746,9 +828,9 @@ void display_failures(int test_attempt, char* failure_report_preamble)
         }
 
         if (failure_info->has_msg) {
-            printf("%s%s%s%sMessage: %s\n",
-                GRAY, failure_report_preamble, detail_preamble, NORMAL,
-                failure_info->msg);
+            printf("%s%s%s%sMessage: %s%s\n",
+                GRAY, failure_report_preamble, detail_preamble, CYAN,
+                failure_info->msg, NORMAL);
         }
 
         printf("%s%s%s%s\n", GRAY, failure_report_preamble, detail_preamble, NORMAL);
@@ -765,6 +847,18 @@ void report_summary()
 
     if (empty_count) {
         printf("%s  No assertions:  %d%s\n", CYAN, empty_count, NORMAL);
+    }
+
+    if (attest_context.requested_tag_count > 0) {
+        printf("%s  Ran tests with tags: ", CYAN);
+        for (int i = 0; i < attest_context.requested_tag_count; i++) {
+            bool is_last_tag = i == attest_context.requested_tag_count - 1;
+            if (is_last_tag) {
+                printf("%s\n%s", attest_context.requested_tags[i], NORMAL);
+            } else {
+                printf("%s, ", attest_context.requested_tags[i]);
+            }
+        }
     }
 
     exit(fail_count || empty_count ? 1 : 0); // NOLINT
@@ -867,9 +961,6 @@ bool every_instance(Status status)
 /**************************
  * MACROS
  *************************/
-
-#define TAGS(...) .tags = { __VA_ARGS__, NULL }
-
 #define TEST(name, ...)                                            \
     static void name(void);                                        \
     static void __attribute__((constructor)) register_##name(void) \
@@ -1262,12 +1353,26 @@ bool every_instance(Status status)
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_EQ, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
 
+#define EXPECT_EQ_U(...)                                           \
+    ATTEST_EXPECT(                                               \
+        BUILD_RELATION(==, __VA_ARGS__),                         \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                  \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_EQ, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%llu", (unsigned long long int)), __VA_ARGS__))
+
 #define EXPECT_NEQ(...)                                           \
     ATTEST_EXPECT(                                                \
         BUILD_RELATION(!=, __VA_ARGS__),                          \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                   \
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_NEQ, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
+
+#define EXPECT_NEQ_U(...)                                           \
+    ATTEST_EXPECT(                                                \
+        BUILD_RELATION(!=, __VA_ARGS__),                          \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                   \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_NEQ, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%llu", (unsigned long long int)), __VA_ARGS__))
 
 #define EXPECT_GT(...)                                           \
     ATTEST_EXPECT(                                               \
@@ -1276,12 +1381,26 @@ bool every_instance(Status status)
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_GT, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
 
+#define EXPECT_GT_U(...)                                           \
+    ATTEST_EXPECT(                                               \
+        BUILD_RELATION(>, __VA_ARGS__),                          \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                  \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_GT, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%llu", (unsigned long long int)), __VA_ARGS__))
+
 #define EXPECT_GTE(...)                                           \
     ATTEST_EXPECT(                                                \
         BUILD_RELATION(>=, __VA_ARGS__),                          \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                   \
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_GTE, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
+
+#define EXPECT_GTE_U(...)                                           \
+    ATTEST_EXPECT(                                                \
+        BUILD_RELATION(>=, __VA_ARGS__),                          \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                   \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_GTE, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%llu", (unsigned long long int)), __VA_ARGS__))
 
 #define EXPECT_LT(...)                                           \
     ATTEST_EXPECT(                                               \
@@ -1290,12 +1409,26 @@ bool every_instance(Status status)
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_LT, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
 
+#define EXPECT_LT_U(...)                                           \
+    ATTEST_EXPECT(                                               \
+        BUILD_RELATION(<, __VA_ARGS__),                          \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                  \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_LT, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%llu", (unsigned long long int)), __VA_ARGS__))
+
 #define EXPECT_LTE(...)                                           \
     ATTEST_EXPECT(                                                \
         BUILD_RELATION(<=, __VA_ARGS__),                          \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                   \
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_LTE, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
+
+#define EXPECT_LTE_U(...)                                           \
+    ATTEST_EXPECT(                                                \
+        BUILD_RELATION(<=, __VA_ARGS__),                          \
+        MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                   \
+        COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_LTE, __VA_ARGS__), \
+        SAVE_TWO_VALUE(("%llu", (unsigned long long int)), __VA_ARGS__))
 
 #define COMPARE_STRINGS(a, b) strcmp(a, b) == 0
 
@@ -1415,15 +1548,27 @@ bool every_instance(Status status)
 
 #define expect_eq(...) EXPECT_EQ(__VA_ARGS__)
 
+#define expect_eq_u(...) EXPECT_EQ_U(__VA_ARGS__)
+
 #define expect_neq(...) EXPECT_NEQ(__VA_ARGS__)
+
+#define expect_neq_u(...) EXPECT_NEQ_U(__VA_ARGS__)
 
 #define expect_gt(...) EXPECT_GT(__VA_ARGS__)
 
+#define expect_gt_u(...) EXPECT_GT_U(__VA_ARGS__)
+
 #define expect_gte(...) EXPECT_GTE(__VA_ARGS__)
+
+#define expect_gte_u(...) EXPECT_GTE_U(__VA_ARGS__)
 
 #define expect_lt(...) EXPECT_LT(__VA_ARGS__)
 
+#define expect_lt_u(...) EXPECT_LT_U(__VA_ARGS__)
+
 #define expect_lte(...) EXPECT_LTE(__VA_ARGS__)
+
+#define expect_lte_u(...) EXPECT_LTE_U(__VA_ARGS__)
 
 #define expect_same_string(...) EXPECT_SAME_STRING(__VA_ARGS__)
 

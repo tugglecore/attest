@@ -270,7 +270,7 @@ def test_configuration [] {
     clang -o attempt_test -I../ attempt_test.c
     let program = ^'./attempt_test' | complete
     $valid_expects = ($valid_expects and $program.exit_code == 1)
-    let valid_msg = $program.stdout | find -r 'Attempt 3' | is-not-empty
+    let valid_msg = $program.stdout | find -r 'Test attempt: 3' | is-not-empty
     $valid_expects = ($valid_expects and $valid_msg)
 
     if $valid_expects {

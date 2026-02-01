@@ -1,5 +1,7 @@
 # Roadmap
 
+ - Pass CLI arguments and options to lifecycle functions
+    - I need to pass a flag to set the logging level of my subject program.
  - Provide more detailed failed details for multiple attempted tests
  - Collocate failed expectations under a single failed test header in summary.
  - fail fast option

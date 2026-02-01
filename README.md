@@ -6,7 +6,7 @@ Single header, C99 compatible, cross-platform test runner.
  - **Cross-Platorm:** Supports Windows, MacOS and Linux
  - **Zero Dynamic Allocation:** Uses only static storage
  - **Fine-Grained Orchestration:** Lifecycle Hooks, Parameterize Tests and test configuration
- - **Structured Diagnostic Output:** Precise locations and detailed failure causes
+ - **Structured Failures:** Nested diagnostic layout designed for human eyes.
 
 ## Basic usage
 ```c
@@ -44,12 +44,13 @@ The options may appear in any order. You pass the options as arguments prefixed 
 |`.disabled`        |`bool`       |`false`  |If true, the runner ignores the test and doesn't report |
 |`.skip`            |`bool`       |`false`  |If true, the runner ignores the test but still report it |
 |`.attempts`        |`int`        |`1`      |The number of times to execute the test body      |
+|`.tags`        |`char*[ATTEST_MAX_TAGS]`        |`NULL`      |tags associated with the function.      |
 |`.before_each`|`void(*)(TextContext*)`|`NULL`|A function that runs before the test.|
 |`.after_each`|`void(*)(TextContext*)`|`NULL`|A function that runs after the test. |
 
 **Example:**
 ```c
-TEST(hit_api, .attempts = 10) {
+TEST(hit_api, .attempts = 10, .tags = { "slow" }) {
     int result = handle_api_request();
     EXPECT_EQ(result, 200);
 }
@@ -199,7 +200,7 @@ AFTER_ALL(test_context)
 - `name`: Unique name for the parameterized test. No spaces or quotes.
 - `case_type`: case data type.
 - `case_name`: Name of case data.
-- `values`: a list of values of type `case_type` enclosed in parenthesis.
+- `values`: a list of structures enclosed in parenthesis of type `{ case_type data; char[ATTEST_CASE_NAME_SIZE] name; }` where `name` is an optional name for the test case and `data` is the data to be passed to the test.
 
 **Options:**
 
@@ -217,7 +218,7 @@ AFTER_ALL(test_context)
 PARAM_TEST(fruit_basket,
     int,
     case_num,
-    (1, 2, 3))
+    ({ 1, "one" } , { 2, "two" } , { 3, "three" }))
 {
     EXPECT_EQ(case_num, 1);
 }
@@ -244,7 +245,8 @@ PARAM_TEST_CTX(basket_case,
     param_context,
     int,
     case_num,
-    int, 1, 2, 3)
+    int,
+    ({ 1, "one" } , { 2, "two" } , { 3, "three" }))
 {
     int shared_num = *(int*)param_context->shared;
     EXPECT_EQ(shared_num, case_num);
@@ -260,7 +262,7 @@ PARAM_TEST_CTX(basket_case,
 - `param_context`: Name of `ParamContext`.
 - `case_type`: case data type.
 - `case_name`: Name of case data.
-- `values`: a list of values of type `case_type` enclosed in parenthesis.
+- `values`: a list of structures enclosed in parenthesis of type `{ case_type data; char[ATTEST_CASE_NAME_SIZE] name; }` where `name` is an optional name for the test case and `data` is the data to be passed to the test.
 
 **Options:**
 Accept all the options available to `PARAM_TEST`.
@@ -273,7 +275,7 @@ PARAM_TEST_CTX(basket_case,
     param_context,
     int,
     case_num,
-    (1, 2, 3))
+    ({ 1, "one" } , { 2, "two" } , { 3, "three" }))
 {
     int global_num = *(int*)context->shared;
     EXPECT_EQ(global_num, case_num);
@@ -319,6 +321,12 @@ TEST(hit_api, .attempts = 10) {
 |EXPECT_LTE(a, b)          |`<any integer>`, `<any integer>` |Cast each argument to a `long long int` and check `a <= b`.   |
 |EXPECT_GT(a, b)           |`<any integer>`, `<any integer>` |Cast each argument to a `long long int` and check `a > b`.   |
 |EXPECT_GTE(a, b)          |`<any integer>`, `<any integer>` |Cast each argument to a `long long int` and check `a >= b`.   |
+|EXPECT_EQ_U(a, b)           |`<any integer>`, `<any integer>` |Cast each argument to a `unsigned long long int` and check `a == b`. |
+|EXPECT_NEQ_U(a, b)          |`<any integer>`, `<any integer>` |Cast each argument to a `unsigned long long int` and check `a != b`.  |
+|EXPECT_GTE_U(a, b)          |`<any integer>`, `<any integer>` |Cast each argument to a `unsigned long long int` and check `a >= b`.   |
+|EXPECT_GT_U(a, b)           |`<any integer>`, `<any integer>` |Cast each argument to a `unsigned long long int` and check `a > b`.   |
+|EXPECT_LT_U(a, b)           |`<any integer>`, `<any integer>` |Cast each argument to a `unsigned long long int` and check `a < b`.  |
+|EXPECT_LTE_U(a, b)          |`<any integer>`, `<any integer>` |Cast each argument to a `unsigned long long int` and check `a <= b`.   |
 
 ## Runner options
 Macros to change the behavior of Attest. You must define runner options before including `attest.h`.
@@ -329,8 +337,14 @@ Macros to change the behavior of Attest. You must define runner options before i
 |-------------------|-------------|---------|-----------------------------|
 |`ATTEST_MAX_TESTS` |`int`        |`128`    |Max number of tests allowed per binary.  |
 |`ATTEST_NO_COLOR`  |`bool`       |`false`  |Disables ANSI color codes in output report.|
+|`ATTEST_NO_UTF8`  |`bool`       |`NULL`  |Disables UTF8 output.|
+|`ATTEST_MAX_FAILURES`  |`int`       |`16`  |Max amount of failures per test.|
+|`ATTEST_MAX_TEST_ATTEMPTS`  |`int`       |`32`  |Max amount of attempts per test.|
+|`ATTEST_MAX_TAGS`  |`int`       |`8`  |Max amount of tags per test.|
+|`ATTEST_MAX_TAG_SIZE`  |`int`       |`21`  |Max tag size.|
 |`ATTEST_VALUE_BUF` |`int`        |`128`    |The max size of buffer used in failure messages. |
 |`ATTEST_MAX_PARAMERTERIZE_RESULTS` |`int`        |`32`    |The max amount of failures for a parameterize test. |
+|`ATTEST_CASE_NAME_SIZE` |`int`        |`128`    |The max size for the case name of a parameterize test. |
 
 **Example:**
 ```c

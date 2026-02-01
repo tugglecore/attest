@@ -6,12 +6,12 @@ watchexec_options := if os_family() == "windows" {
     "-i '*.out' -i test_artifacts -i 'test_artifacts/**'"
 }
 
-dev target:
-    watchexec {{watchexec_options}} 'clear && just run {{target}}'
+dev target *args:
+    watchexec {{watchexec_options}} 'clear && just run {{target}} args'
 
-@run command:
+@run command *args:
     clang -Wall -Wextra -std=c99 -I ./ -I demo_program example_{{command}}.c
-    -./a.{{ext}}
+    -./a.{{ext}} {{args}}
     rm ./a.{{ext}}
 
 test:
