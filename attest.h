@@ -534,7 +534,8 @@ void run_parameterize_test(TestConfig* test_config)
                     case_failure_info.line,
                     case_failure_info.verification_text);
 
-                if (case_failure_info.has_expected_value) {
+                bool expected_has_label = strcmp(case_failure_info.expected_label, case_failure_info.expected_value) != 0;
+                if (case_failure_info.has_expected_value && expected_has_label) {
                     if (is_last_failed_case) {
                         printf("    ");
                     } else {
@@ -547,7 +548,7 @@ void run_parameterize_test(TestConfig* test_config)
                         printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
                     }
 
-                    printf("%sExpected:%s %s%s%s\n", GRAY, NORMAL, GREEN, case_failure_info.expected_value, NORMAL);
+                    printf("%s = %s\n", case_failure_info.expected_label, case_failure_info.expected_value);
                 }
 
                 if (is_last_failed_case) {
@@ -562,7 +563,11 @@ void run_parameterize_test(TestConfig* test_config)
                     printf("%s%s%s   ", GRAY, TRUNK, NORMAL);
                 }
 
-                printf("%sActual:%s   %s%s%s\n", GRAY, NORMAL, RED, case_failure_info.actual_value, NORMAL);
+                bool actual_has_label = strcmp(case_failure_info.actual_label, case_failure_info.actual_value) != 0;
+
+                if (actual_has_label) {
+                    printf("%s = %s\n", case_failure_info.actual_label, case_failure_info.actual_value);
+                }
 
                 if (case_failure_info.has_msg) {
                     if (is_last_failed_case) {
@@ -1353,7 +1358,7 @@ bool every_instance(Status status)
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_EQ, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
 
-#define EXPECT_EQ_U(...)                                           \
+#define EXPECT_EQ_U(...)                                         \
     ATTEST_EXPECT(                                               \
         BUILD_RELATION(==, __VA_ARGS__),                         \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                  \
@@ -1367,7 +1372,7 @@ bool every_instance(Status status)
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_NEQ, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
 
-#define EXPECT_NEQ_U(...)                                           \
+#define EXPECT_NEQ_U(...)                                         \
     ATTEST_EXPECT(                                                \
         BUILD_RELATION(!=, __VA_ARGS__),                          \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                   \
@@ -1381,7 +1386,7 @@ bool every_instance(Status status)
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_GT, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
 
-#define EXPECT_GT_U(...)                                           \
+#define EXPECT_GT_U(...)                                         \
     ATTEST_EXPECT(                                               \
         BUILD_RELATION(>, __VA_ARGS__),                          \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                  \
@@ -1395,7 +1400,7 @@ bool every_instance(Status status)
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_GTE, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
 
-#define EXPECT_GTE_U(...)                                           \
+#define EXPECT_GTE_U(...)                                         \
     ATTEST_EXPECT(                                                \
         BUILD_RELATION(>=, __VA_ARGS__),                          \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                   \
@@ -1409,7 +1414,7 @@ bool every_instance(Status status)
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_LT, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
 
-#define EXPECT_LT_U(...)                                           \
+#define EXPECT_LT_U(...)                                         \
     ATTEST_EXPECT(                                               \
         BUILD_RELATION(<, __VA_ARGS__),                          \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                  \
@@ -1423,7 +1428,7 @@ bool every_instance(Status status)
         COLLECT_TWO_VERIFICATION_TOKENS(EXPECT_LTE, __VA_ARGS__), \
         SAVE_TWO_VALUE(("%lld", (long long int)), __VA_ARGS__))
 
-#define EXPECT_LTE_U(...)                                           \
+#define EXPECT_LTE_U(...)                                         \
     ATTEST_EXPECT(                                                \
         BUILD_RELATION(<=, __VA_ARGS__),                          \
         MSG_DISPATCH_FOR_TWO_ARGS(__VA_ARGS__),                   \
