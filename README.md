@@ -1,6 +1,6 @@
 # Attest
 
-Single header, C99 compatible, cross-platform test runner.
+Cross-platform, heap-free C test framework with parameterized and lifecycle-aware tests, assertions with ad-hoc formatting and detailed failure diagnostics.
 
 ## Features
  - **Cross-Platorm:** Supports Windows, MacOS and Linux
