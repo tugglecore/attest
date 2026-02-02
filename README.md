@@ -3,10 +3,13 @@
 Cross-platform, heap-free C test framework with parameterized and lifecycle-aware tests, assertions with ad-hoc formatting and detailed failure diagnostics.
 
 ## Features
- - **Cross-Platorm:** Supports Windows, MacOS and Linux
- - **Zero Dynamic Allocation:** Uses only static storage
- - **Fine-Grained Orchestration:** Lifecycle Hooks, Parameterize Tests and test configuration
- - **Structured Failures:** Nested diagnostic layout designed for human eyes.
+ - **Zero Dynamic Allocation:** Performs no heap allocation. It operates on static storage.
+ - **Parameterized Testing:** Reduce boilerplate by running the same test logic against multiple data sets.
+ - **Lifecycle Management:** Includes `setup` and `teardown` hooks with *context-passing*.
+ - **Rich Assertions:** `expect`-style assertions with support for *ad-hoc formatting* for custom, descriptive messges.
+ - **Test Categorization:** Use tags to organize your suite, allowing you to filter groups of tests.
+ - **Fine-Grained Orchestration:** Built-in support for skipping or retrying tests to handle any environment.
+ - **Lightweight & Cross-Platorm:** Supports Windows, MacOS and Linux with a minimal memory footprint.
 
 ## Basic usage
 ```c
