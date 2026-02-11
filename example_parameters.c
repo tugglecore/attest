@@ -16,13 +16,12 @@ PARAM_TEST(candy_basket,
     int,
     num,
     (
-        { .data = 3, "one name" },
-        { .data = 3, .name = "two name" },
-        { .data = 3, "" },
+        {  "one name", .data = 3, },
+        {.name = "two name", .data = 3 },
+        { "", .data = 3 },
         { .name = "fourth name", .data = 4 },
         { .data = 5 },
-        { 15 },
-        { 7, "" }))
+        { "", 7 }))
 {
     EXPECT_EQ(num, 1, "not a one");
     EXPECT_EQ(num, 3, "not a three");

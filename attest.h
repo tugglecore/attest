@@ -1030,8 +1030,8 @@ bool every_instance(Status status)
     void title##_impl(param_type param_var);                                 \
     void title##_impl_wrapper(TestConfig* cfg);                              \
     struct title##_type {                                                    \
-        param_type data;                                                     \
         char name[ATTEST_CASE_NAME_SIZE];                                    \
+        param_type data;                                                     \
     };                                                                       \
     static struct title##_type title##_data[] = {                            \
         STRIP_PARENS(values_group)                                           \
@@ -1085,8 +1085,8 @@ bool every_instance(Status status)
     void title##_impl(ParamContext* context, param_type param_var);               \
     void title##_impl_wrapper(TestConfig* cfg);                                   \
     struct title##_type {                                                         \
-        param_type data;                                                          \
         char name[ATTEST_CASE_NAME_SIZE];                                         \
+        param_type data;                                                          \
     };                                                                            \
     static struct title##_type title##_data[] = {                                 \
         STRIP_PARENS(values_group)                                                \

@@ -4,9 +4,9 @@ Cross-platform, heap-free C test framework with parameterized and lifecycle-awar
 
 ## Features
  - **Zero Dynamic Allocation:** Performs no heap allocation. It operates on static storage.
- - **Parameterized Testing:** Reduce boilerplate by running the same test logic against multiple data sets.
+ - **Parameterized Testing:** Reduce boilerplate by running the same test logic against different data sets.
  - **Lifecycle Management:** Includes `setup` and `teardown` hooks with *context-passing*.
- - **Rich Assertions:** `expect`-style assertions with support for *ad-hoc formatting* for descriptive messges.
+ - **Rich Assertions:** `expect`-style assertions with support for *ad-hoc formatting* for descriptive messages.
  - **Test Categorization:** Use tags to organize your suite, allowing you to filter groups of tests.
  - **Fine-Grained Orchestration:** Built-in support for skipping or retrying tests to handle any environment.
  - **Lightweight & Cross-Platorm:** Supports Windows, MacOS and Linux with a minimal memory footprint.
@@ -197,14 +197,13 @@ AFTER_ALL(test_context)
 ```
 
 
-
 ### `PARAM_TEST(name, case_type, case_name, (values), [options...])`
 
 **Parameters:**
 - `name`: Unique name for the parameterized test. No spaces or quotes.
 - `case_type`: case data type.
 - `case_name`: Name of case data.
-- `values`: a list of structures enclosed in parenthesis of type `{ case_type data; char[ATTEST_CASE_NAME_SIZE] name; }` where `name` is an optional name for the test case and `data` is the data to be passed to the test.
+- `values`: a list of structures enclosed in parenthesis of type `{ char[ATTEST_CASE_NAME_SIZE] name; case_type data; }` where `name` is an optional name for the test case and `data` is the value to be passed to the test.
 
 **Options:**
 
@@ -266,7 +265,7 @@ PARAM_TEST_CTX(basket_case,
 - `param_context`: Name of `ParamContext`.
 - `case_type`: case data type.
 - `case_name`: Name of case data.
-- `values`: a list of structures enclosed in parenthesis of type `{ case_type data; char[ATTEST_CASE_NAME_SIZE] name; }` where `name` is an optional name for the test case and `data` is the data to be passed to the test.
+- `values`: a list of structures enclosed in parenthesis of type `{ char[ATTEST_CASE_NAME_SIZE] name; case_type data; }` where `name` is an optional name for the test case and `data` is the value to be passed to the test.
 
 **Options:**
 Accept all the options available to `PARAM_TEST`.
