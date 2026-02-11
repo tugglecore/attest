@@ -86,15 +86,16 @@
 
 typedef struct
 {
-    void* shared;
-    void* local;
+    void* all;
+    void* each;
+    void* self;
 } TestContext;
 
 typedef struct
 {
-    void* shared;
+    void* all;
     void* set;
-    void* local;
+    void* self;
     void* case_data;
     char* case_name;
 } ParamContext;
@@ -126,7 +127,7 @@ typedef struct TestConfig {
     void (*after_each_case)(ParamContext*);
     void (*param_init)(void);
     void (*param_test_runner)(void);
-    void (*param_test)(struct TestConfig);
+    void (*param_test)(struct TestConfig*);
     struct TestConfig* next;
     int attempt_count;
     int param_index;
@@ -175,7 +176,7 @@ typedef struct
 
 typedef struct
 {
-    void* shared;
+    void* all;
 } GlobalContext;
 
 typedef struct
@@ -252,94 +253,94 @@ void attest_update_registry(TestConfig* test_config)
     test_config->next = NULL;
 }
 
-void attester(TestConfig cfg)
+void attester()
 {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpragmas"
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunknown-warning-option"
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdangling-pointer"
-    attest_internal_current_test = &cfg;
-#pragma GCC diagnostic pop
-#pragma GCC diagnostic pop
+    if (attest_internal_current_test == NULL) {
+        fprintf(stderr, "[Attest Error] Reach unreachable state");
+        exit(1);
+    }
 
-    bool is_param_test = cfg.param_test != NULL;
+    TestConfig* cfg = attest_internal_current_test;
 
-    if (cfg.skip) {
+    bool is_param_test = cfg->param_test != NULL;
+
+    if (cfg->skip) {
         skip_count += 1;
         return;
     }
 
     test_attempt_count = 0;
-    int max_attempts = cfg.attempts ? cfg.attempts : 1;
+    int max_attempts = cfg->attempts ? cfg->attempts : 1;
     Status statuses[ATTEST_MAX_TEST_ATTEMPTS];
 
     for (
-        cfg.attempt_count = 0;
-        cfg.attempt_count < max_attempts;
-        cfg.attempt_count++) {
+        cfg->attempt_count = 0;
+        cfg->attempt_count < max_attempts;
+        cfg->attempt_count++) {
         TestContext context = {
-            .shared = NULL,
-            .local = NULL
+            .all = NULL,
+            .each = NULL,
+            .self = NULL
         };
 
-        global_param_context.local = NULL;
+        global_param_context.self = NULL;
 
         if (attest_context.global_shared_data != NULL) {
-            context.shared = attest_context.global_shared_data;
+            context.all = attest_context.global_shared_data;
         }
 
         if (attest_before_each_handler != NULL && !is_param_test) {
             attest_before_each_handler(&context);
         }
 
-        if (is_param_test && cfg.before) {
+        if (is_param_test && cfg->before) {
             (void)fprintf(stderr, "%s[ERROR] Use `before_each_case` instead of `before_each` for paramerterize tests.%s\n", RED, NORMAL);
             exit(1);
         }
 
-        if (cfg.before) {
-            cfg.before(&context);
+        if (cfg->before) {
+            cfg->before(&context);
         }
 
-        if (cfg.before_each_case) {
-            cfg.before_each_case(&global_param_context);
+        if (cfg->before_each_case) {
+            cfg->before_each_case(&global_param_context);
         }
 
-        if (cfg.contextual_test) {
-            cfg.contextual_test(&context);
-        } else if (cfg.simple_test) {
-            cfg.simple_test();
-        } else if (cfg.param_test) {
-            cfg.param_test(cfg);
+        if (cfg->contextual_test) {
+            cfg->contextual_test(&context);
+        } else if (cfg->simple_test) {
+            cfg->simple_test();
+        } else if (cfg->param_test) {
+            cfg->param_test(cfg);
         } else {
             (void)fprintf(stderr, "%s[ERROR] Attest entered invalid state. capture debug logs and file issue.%s\n", RED, NORMAL);
             exit(1);
         }
 
-        if (is_param_test && cfg.after) {
+        if (is_param_test && cfg->after) {
             (void)fprintf(stderr, "%s[ERROR] Use `after_each_case` instead of `after_each` for paramerterize tests.%s\n", RED, NORMAL);
             exit(1);
         }
 
-        if (cfg.after) {
-            cfg.after(&context);
+        if (cfg->after) {
+            cfg->after(&context);
         }
 
-        free(context.local);
+        free(context.self);
 
-        if (cfg.after_each_case) {
-            cfg.after_each_case(&global_param_context);
+        if (cfg->after_each_case) {
+            cfg->after_each_case(&global_param_context);
         }
 
         if (attest_after_each_handler != NULL) {
             attest_after_each_handler(&context);
         }
 
-        statuses[test_attempt_count] = cfg.status;
+        free(context.each);
+
+        statuses[test_attempt_count] = cfg->status;
         test_attempt_count++;
-        if (cfg.status == PASSED || cfg.status == MISSING_EXPECTATION) {
+        if (cfg->status == PASSED || cfg->status == MISSING_EXPECTATION) {
             break;
         }
     }
@@ -349,9 +350,9 @@ void attester(TestConfig cfg)
         exit(1); // NOLINT
     }
 
-    if (is_param_test && cfg.status == MISSING_EXPECTATION) {
+    if (is_param_test && cfg->status == MISSING_EXPECTATION) {
         InstanceResult instance_result = { .status = MISSING_EXPECTATION };
-        parameterize_instance_results[cfg.param_index] = instance_result;
+        parameterize_instance_results[cfg->param_index] = instance_result;
     }
 
     if (is_param_test) {
@@ -364,10 +365,10 @@ void attester(TestConfig cfg)
         test_attempt_count);
 
     if (an_attempt_is_missing_verification) {
-        cfg.status = MISSING_EXPECTATION;
+        cfg->status = MISSING_EXPECTATION;
     }
 
-    switch (cfg.status) {
+    switch (cfg->status) {
     case PASSED:
         pass_count++;
         break;
@@ -381,8 +382,8 @@ void attester(TestConfig cfg)
             attest_internal_current_test->test_title,
             NORMAL);
         printf("%s Location:%s %s%s:%d%s\n\n",
-            CYAN, NORMAL, GRAY, cfg.filename,
-            cfg.line,
+            CYAN, NORMAL, GRAY, cfg->filename,
+            cfg->line,
             NORMAL);
         break;
     case FAILED:
@@ -390,7 +391,7 @@ void attester(TestConfig cfg)
         printf(
             "%s[FAIL]%s %s%s%s\n",
             RED, NORMAL, BOLD_WHITE,
-            cfg.test_title,
+            cfg->test_title,
             NORMAL);
         bool more_than_one_attempt = test_attempt_count > 1;
         for (int i = 0; i < test_attempt_count; i++) {
@@ -429,7 +430,7 @@ void run_parameterize_test(TestConfig* test_config)
         exit(1); // NOLINT
     }
 
-    global_param_context.shared = attest_context.global_shared_data;
+    global_param_context.all = attest_context.global_shared_data;
 
     if (parameterize_before_all_cases != NULL) {
         parameterize_before_all_cases(&global_param_context);
@@ -605,9 +606,9 @@ void run_parameterize_test(TestConfig* test_config)
         parameterize_after_all_cases(&global_param_context);
     }
 
-    global_param_context.shared = NULL;
+    global_param_context.all = NULL;
     global_param_context.set = NULL;
-    global_param_context.local = NULL;
+    global_param_context.self = NULL;
 
     parameterize_before_all_cases = NULL;
     parameterize_after_all_cases = NULL;
@@ -712,13 +713,13 @@ int main(int argc, char* argv[])
         test_config = test_config->next;
     }
 
-    GlobalContext global_context = { .shared = NULL };
+    GlobalContext global_context = { .all = NULL };
 
     if (attest_before_all_handler) {
         attest_before_all_handler(&global_context);
 
-        if (global_context.shared != NULL) {
-            attest_context.global_shared_data = global_context.shared;
+        if (global_context.all != NULL) {
+            attest_context.global_shared_data = global_context.all;
         }
     }
 
@@ -758,7 +759,9 @@ int main(int argc, char* argv[])
         if (test_config->param_test_runner) {
             run_parameterize_test(test_config);
         } else {
-            attester(*test_config);
+            attest_internal_current_test = test_config;
+            attester();
+            attest_internal_current_test = NULL;
         }
 
         memset(failed_assertions_per_attempt, 0, sizeof failed_assertions_per_attempt);
@@ -871,6 +874,11 @@ void report_summary()
 
 void report_success()
 {
+    if (attest_internal_current_test == NULL) {
+        fprintf(stderr, "[Attest Error] Reach unreachable state");
+        exit(1);
+    }
+
     TestConfig* current_test = attest_internal_current_test;
 
     current_test->status = PASSED;
@@ -892,27 +900,13 @@ void report_success()
     }
 }
 
-void report_failed_attempt(FailureInfo failure_info)
-{
-    TestConfig* current_test = attest_internal_current_test;
-
-    if (current_test->attempt_count < current_test->attempts) {
-        printf(
-            "%s -> %s%sAttempt %d: %sFailed%s %s(Assertion at line %d)%s\n",
-            GRAY, NORMAL, CYAN,
-            current_test->attempt_count + 1,
-            RED, NORMAL, GRAY,
-            failure_info.line,
-            NORMAL);
-    }
-
-    if (current_test->attempt_count == current_test->attempts - 1) {
-        printf("\n");
-    }
-}
-
 void report_failure(FailureInfo failure_info)
 {
+    if (attest_internal_current_test == NULL) {
+        fprintf(stderr, "[Attest Error] Reach unreachable state");
+        exit(1);
+    }
+
     attest_internal_current_test->status = FAILED;
 
     if (attest_internal_current_test->param_test) {
@@ -1034,7 +1028,7 @@ bool every_instance(Status status)
 
 #define PARAM_TEST(title, param_type, param_var, values_group, ...)          \
     void title##_impl(param_type param_var);                                 \
-    void title##_impl_wrapper(TestConfig cfg);                               \
+    void title##_impl_wrapper(TestConfig* cfg);                              \
     struct title##_type {                                                    \
         param_type data;                                                     \
         char name[ATTEST_CASE_NAME_SIZE];                                    \
@@ -1064,7 +1058,9 @@ bool every_instance(Status status)
             struct title##_type* test_case = &title##_data[i];               \
             global_param_context.case_data = (void*)&test_case->data;        \
             global_param_context.case_name = test_case->name;                \
-            attester(param_cfg);                                             \
+            attest_internal_current_test = &param_cfg;                       \
+            attester();                                                      \
+            attest_internal_current_test = NULL;                             \
         }                                                                    \
     }                                                                        \
     static void __attribute__((constructor)) register_##title##_runner(void) \
@@ -1078,64 +1074,66 @@ bool every_instance(Status status)
         };                                                                   \
         attest_update_registry(&test_config);                                \
     }                                                                        \
-    void title##_impl_wrapper(TestConfig cfg)                                \
+    void title##_impl_wrapper(TestConfig* cfg)                               \
     {                                                                        \
-        title##_impl(title##_data[cfg.param_index].data);                    \
+        title##_impl(title##_data[cfg->param_index].data);                   \
     }                                                                        \
     void title##_impl(param_type param_var)
 
-#define PARAM_TEST_CTX(title,                                                    \
-    context, param_type, param_var, values_group, ...)                           \
-    void title##_impl(ParamContext* context, param_type param_var);              \
-    void title##_impl_wrapper(TestConfig cfg);                                   \
-    struct title##_type {                                                        \
-        param_type data;                                                         \
-        char name[ATTEST_CASE_NAME_SIZE];                                        \
-    };                                                                           \
-    static struct title##_type title##_data[] = {                                \
-        STRIP_PARENS(values_group)                                               \
-    };                                                                           \
-                                                                                 \
-    void title##_init(void)                                                      \
-    {                                                                            \
-        TestConfig cfg = { __VA_ARGS__ };                                        \
-        case_count = sizeof(title##_data) / sizeof(struct title##_type);         \
-        parameterize_before_all_cases = cfg.before_all_cases;                    \
-        parameterize_after_all_cases = cfg.after_all_cases;                      \
-    }                                                                            \
-    void title##_runner(void)                                                    \
-    {                                                                            \
-        for (int i = 0; i < case_count; i++) {                                   \
-            TestConfig param_cfg = {                                             \
-                .filename = __FILE__,                                            \
-                .line = __LINE__,                                                \
-                .test_title = #title,                                            \
-                .param_test = title##_impl_wrapper,                              \
-                .param_index = i,                                                \
-                __VA_ARGS__                                                      \
-            };                                                                   \
-            struct title##_type* test_case = &title##_data[i];                   \
-            global_param_context.case_data = (void*)&test_case->data;            \
-            global_param_context.case_name = test_case->name;                    \
-            attester(param_cfg);                                                 \
-        }                                                                        \
-    }                                                                            \
-    static void __attribute__((constructor)) register_##title##_runner(void)     \
-    {                                                                            \
-        static TestConfig test_config = {                                        \
-            .filename = __FILE__,                                                \
-            .line = __LINE__,                                                    \
-            .test_title = #title,                                                \
-            .param_test_runner = title##_runner,                                 \
-            .param_init = title##_init,                                          \
-        };                                                                       \
-        attest_update_registry(&test_config);                                    \
-    }                                                                            \
-    void title##_impl_wrapper(TestConfig cfg)                                    \
-    {                                                                            \
-        /* TODO: pass a copy of global_param_context */                          \
-        title##_impl(&global_param_context, title##_data[cfg.param_index].data); \
-    }                                                                            \
+#define PARAM_TEST_CTX(title,                                                     \
+    context, param_type, param_var, values_group, ...)                            \
+    void title##_impl(ParamContext* context, param_type param_var);               \
+    void title##_impl_wrapper(TestConfig* cfg);                                   \
+    struct title##_type {                                                         \
+        param_type data;                                                          \
+        char name[ATTEST_CASE_NAME_SIZE];                                         \
+    };                                                                            \
+    static struct title##_type title##_data[] = {                                 \
+        STRIP_PARENS(values_group)                                                \
+    };                                                                            \
+                                                                                  \
+    void title##_init(void)                                                       \
+    {                                                                             \
+        TestConfig cfg = { __VA_ARGS__ };                                         \
+        case_count = sizeof(title##_data) / sizeof(struct title##_type);          \
+        parameterize_before_all_cases = cfg.before_all_cases;                     \
+        parameterize_after_all_cases = cfg.after_all_cases;                       \
+    }                                                                             \
+    void title##_runner(void)                                                     \
+    {                                                                             \
+        for (int i = 0; i < case_count; i++) {                                    \
+            TestConfig param_cfg = {                                              \
+                .filename = __FILE__,                                             \
+                .line = __LINE__,                                                 \
+                .test_title = #title,                                             \
+                .param_test = title##_impl_wrapper,                               \
+                .param_index = i,                                                 \
+                __VA_ARGS__                                                       \
+            };                                                                    \
+            struct title##_type* test_case = &title##_data[i];                    \
+            global_param_context.case_data = (void*)&test_case->data;             \
+            global_param_context.case_name = test_case->name;                     \
+            attest_internal_current_test = &param_cfg;                            \
+            attester();                                                           \
+            attest_internal_current_test = NULL;                                  \
+        }                                                                         \
+    }                                                                             \
+    static void __attribute__((constructor)) register_##title##_runner(void)      \
+    {                                                                             \
+        static TestConfig test_config = {                                         \
+            .filename = __FILE__,                                                 \
+            .line = __LINE__,                                                     \
+            .test_title = #title,                                                 \
+            .param_test_runner = title##_runner,                                  \
+            .param_init = title##_init,                                           \
+        };                                                                        \
+        attest_update_registry(&test_config);                                     \
+    }                                                                             \
+    void title##_impl_wrapper(TestConfig* cfg)                                    \
+    {                                                                             \
+        /* TODO: pass a copy of global_param_context */                           \
+        title##_impl(&global_param_context, title##_data[cfg->param_index].data); \
+    }                                                                             \
     void title##_impl(ParamContext* context, param_type param_var)
 
 /**************************

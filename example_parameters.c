@@ -4,7 +4,12 @@ BEFORE_ALL(ctx)
 {
     int* foo = malloc(sizeof(int));
     *foo = 3;
-    ctx->shared = (void*)foo;
+    ctx->all = (void*)foo;
+}
+
+AFTER_ALL(ctx)
+{
+    free(ctx->all);
 }
 
 PARAM_TEST(candy_basket,
@@ -16,6 +21,7 @@ PARAM_TEST(candy_basket,
         { .data = 3, "" },
         { .name = "fourth name", .data = 4 },
         { .data = 5 },
+        { 15 },
         { 7, "" }))
 {
     EXPECT_EQ(num, 1, "not a one");
@@ -29,21 +35,21 @@ void before_all_cases(ParamContext* context)
     context->set = (void*)foo;
 }
 
+void after_all_cases(ParamContext* context)
+{
+    free(context->set);
+}
+
 void before_each_case(ParamContext* context)
 {
     int* foo = malloc(sizeof(int));
     *foo = 10;
-    context->local = (void*)foo;
+    context->self = (void*)foo;
 }
 
 void after_each_case(ParamContext* context)
 {
-    free(context->local);
-}
-
-void after_all_cases(ParamContext* context)
-{
-    free(context->set);
+    free(context->self);
 }
 
 PARAM_TEST_CTX(basket_case,
@@ -56,8 +62,8 @@ PARAM_TEST_CTX(basket_case,
     .after_all_cases = after_all_cases,
     .after_each_case = after_each_case, )
 {
-    int shared_num = *(int*)context->shared;
+    int shared_num = *(int*)context->all;
     int set_num = *(int*)context->set;
-    int local_num = *(int*)context->local;
+    int local_num = *(int*)context->self;
     EXPECT_EQ(shared_num + set_num + local_num + num, 1);
 }

@@ -66,10 +66,11 @@ TEST(hit_api, .attempts = 10, .tags = { "slow" }) {
 Attest passes a `TestContext` object to each lifecycle and `TEST_CTX` function.
 
 **Fields:**
-|name            |Type         |Description                               |
-|----------------|-------------|------------------------------------------|
-|`shared`        |`void*`      |Data intended shared amongst all tests and lifecycle functions. Value available for entire program. User cleanup data.|
-|`local`         |`void*`      |Data intended for a single tests. Value set to `NULL` before each triplet of `BEFORE_EACH`, `TEST_CTX` and `AFTER_EACH`. Attest cleanup data.|
+|name    |Type    |Description                               |
+|--------|--------|------------------------------------------|
+|`all`   |`void*` |Data intended to be shared amongst all tests and lifecycle functions. Value available for entire program. User has responsible to cleanup data.|
+|`each`  |`void*` |Data created for each test. User has responsible to cleanup data.|
+|`self`  |`void*` |Data intended for a single test. User has responsible to cleanup data|
 
 **Example:**
 ```c
@@ -234,11 +235,11 @@ PARAM_TEST(fruit_basket,
 Attest passes a `ParamContext` object to each test case of a parameterized tests and each parameterized lifecycle function.
 
 **Fields:**
-|name            |Type      |Description                                   |
-|----------------|----------|----------------------------------------------|
-|`shared`        |`void*`   |Data intended shared amongst all tests and lifecycle functions. Value available for entire program.|
-|`local`         |`void*`   |Data intended for single parameterized test instance. Value set to `NULL` before each triplet `BEFORE_EACH_CASE`, `AFTER_EACH_CASE` and a single instance of `PARAM_TEST_CASE`.|
-|`set`           |`void*`   |Data intended for entire parameterized test. Should set in `.before_all_cases`. Data available for all parameterized cases.|
+|name      |Type      |Description                                   |
+|----------|----------|----------------------------------------------|
+|`all`     |`void*`   |Data intended shared amongst all tests and lifecycle functions. Value available for entire program.|
+|`set`     |`void*`   |Data intended for entire parameterized test. Should be set by `.before_all_cases`.|
+|`self`    |`void*`  |Data intended for each case. Should be set by `.before_each_case`.|
 
 **Example:**
 ```c

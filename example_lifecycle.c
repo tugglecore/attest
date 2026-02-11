@@ -3,26 +3,35 @@
 BEFORE_ALL(context)
 {
     int* foo = malloc(sizeof(int));
+    if (!foo) {
+        exit(1);
+    }
     *foo = 7;
-    context->shared = (void*)foo;
-}
-
-BEFORE_EACH(context)
-{
-    int* foo = malloc(sizeof(int));
-    *foo = *(int*)context->shared - 3;
-    context->local = (void*)foo;
+    context->all = (void*)foo;
 }
 
 AFTER_ALL(context)
 {
-    free(context->shared);
+    free(context->all);
+    context->all = NULL;
+}
+
+BEFORE_EACH(context)
+{
+    int* bar = malloc(sizeof(int));
+
+    if (!bar) {
+        exit(1);
+    }
+
+    *bar = 4;
+    context->each = (void*)bar;
 }
 
 AFTER_EACH(context)
 {
-    free(context->local);
-    context->local = NULL;
+    free(context->each);
+    context->each = NULL;
 }
 
 // Lets move onto something completely different: Lifecycle methods.
@@ -34,20 +43,26 @@ AFTER_EACH(context)
 void setup(TestContext* context)
 {
     int* random_number = malloc(sizeof(int));
-    *random_number = *(int*)context->local + *(int*)context->shared + 3;
-    context->local = (void*)random_number;
+
+    if (!random_number) {
+        exit(1);
+    }
+
+    *random_number = 10;
+    context->self = (void*)random_number;
 }
 
 void cleanup(TestContext* context)
 {
-    free(context->local);
-    context->local = NULL;
+    free(context->self);
+    context->self = NULL;
 }
 
 TEST_CTX(with_a_context, context, .before = setup, .after = cleanup)
 {
-    int global_num = *(int*)context->shared;
-    int local_num = *(int*)context->local;
+    int global_num = *(int*)context->all;
+    int each_num = *(int*)context->each;
+    int self_num = *(int*)context->self;
 
-    EXPECT_EQ(global_num + local_num, 21);
+    EXPECT_EQ(global_num + each_num + self_num, 21);
 }
