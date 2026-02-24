@@ -1,13 +1,14 @@
 # Attest
 
-Cross-platform, heap-free C test framework with parameterized and lifecycle-aware tests, assertions with ad-hoc formatting and detailed failure diagnostics.
+Cross-platform, heap-free C test framework with lifecycle hooks and parameterized functions, assertions with ad-hoc formatting and detailed failure diagnostics.
 
 ## Features
- - **Zero Dynamic Allocation:** Performs no heap allocation. It operates on static storage.
+ - **Automatic Test Registration:** Attest automatically discover tests.
  - **Parameterized Testing:** Reduce boilerplate by running the same test logic against different data sets.
  - **Lifecycle Management:** Includes `setup` and `teardown` hooks with *context-passing*.
- - **Rich Assertions:** `expect`-style assertions with support for *ad-hoc formatting* for descriptive messages.
  - **Test Categorization:** Use tags to organize your suite, allowing you to filter groups of tests.
+ - **Rich Assertions:** `expect`-style assertions with support for *ad-hoc formatting* for descriptive messages.
+ - **Zero Dynamic Allocation:** Performs no heap allocation. It operates on static storage.
  - **Fine-Grained Orchestration:** Built-in support for skipping or retrying tests to handle any environment.
  - **Lightweight & Cross-Platorm:** Supports Windows, MacOS and Linux with a minimal memory footprint.
 
@@ -15,7 +16,7 @@ Cross-platform, heap-free C test framework with parameterized and lifecycle-awar
 ```c
 #include "attest.h"
 
-TEST(basic_math) {
+TEST(math) {
     int expected = 7;
     int actual = 3 + 4;
 
@@ -35,10 +36,10 @@ Drop the header file anywhere in your project's include directory. Then include 
 
 ### `TEST(name, [options...])`
 
-Defines a test case. This macro automatically registers the case with the runner.
+Defines a test case. This macro automatically registers the test case with the Attest.
 
 **Parameters:**
-- `name`: Unique name for the test case. No spaces or quotes
+- `name`: Unique name for the test case. No spaces or quotes allowed.
 
 **Options:**
 The options may appear in any order. You pass the options as arguments prefixed with a dot. 
@@ -47,9 +48,9 @@ The options may appear in any order. You pass the options as arguments prefixed 
 |`.disabled`        |`bool`       |`false`  |If true, the runner ignores the test and doesn't report |
 |`.skip`            |`bool`       |`false`  |If true, the runner ignores the test but still report it |
 |`.attempts`        |`int`        |`1`      |The number of times to execute the test body      |
-|`.tags`        |`char*[ATTEST_MAX_TAGS]`        |`NULL`      |tags associated with the function.      |
-|`.before_each`|`void(*)(TextContext*)`|`NULL`|A function that runs before the test.|
-|`.after_each`|`void(*)(TextContext*)`|`NULL`|A function that runs after the test. |
+|`.tags`            |`char*[ATTEST_MAX_TAGS]`  |`NULL`  |tags associated with the function.      |
+|`.before`     |`void(*)(TextContext*)`   |`NULL`  |A function that runs before the test.|
+|`.after`      |`void(*)(TextContext*)`|`NULL`|A function that runs after the test. |
 
 **Example:**
 ```c
@@ -58,40 +59,6 @@ TEST(hit_api, .attempts = 10, .tags = { "slow" }) {
     EXPECT_EQ(result, 200);
 }
 ```
-
-
-
-### `TestContext`
-
-Attest passes a `TestContext` object to each lifecycle and `TEST_CTX` function.
-
-**Fields:**
-|name    |Type    |Description                               |
-|--------|--------|------------------------------------------|
-|`all`   |`void*` |Data intended to be shared amongst all tests and lifecycle functions. Value available for entire program. User has responsible to cleanup data.|
-|`each`  |`void*` |Data created for each test. User has responsible to cleanup data.|
-|`self`  |`void*` |Data intended for a single test. User has responsible to cleanup data|
-
-**Example:**
-```c
-#include "attest.h"
-
-BEFORE_ALL(test_context)
-{
-    int* foo = malloc(sizeof(int));
-    *foo = 7;
-    test_context->shared = (void*)foo;
-}
-
-TEST_CTX(with_a_context, test_context)
-{
-    int global_num = *(int*)test_context->shared;
-
-    EXPECT_EQ(global_num + local_num, 21);
-}
-```
-
-
 
 ### `TEST_CTX(name, test_context, [options...])`
 
@@ -119,18 +86,72 @@ TEST_CTX(with_a_context, test_context)
 {
     int global_num = *(int*)test_context->shared;
 
-    EXPECT_EQ(global_num + local_num, 21);
+    EXPECT_EQ(14 + global_num, 21);
 }
 ```
 
+### `TestContext`
 
+Attest passes a `TestContext` object to each lifecycle function and `TEST_CTX` function. This object has fields containing user custom data. User's responsibility to clean up data.
+
+**Fields:**
+|name    |Type    |Description                               |
+|--------|--------|------------------------------------------|
+|`all`   |`void*` |Data shared amongst all tests and lifecycle functions. The value is available for the entire program.|
+|`each`  |`void*` |Data created for each test. This field is freed after each test and should be set for each test inside of the `before_each` lifecycle function.|
+|`self`  |`void*` |Data intended for a single test. This field will be freed at the end of a test and should be set inside of a `.before` lifecycle function.|
+
+**Example:**
+```c
+#include "attest.h"
+
+BEFORE_ALL(test_context)
+{
+    int* foo = malloc(sizeof(int));
+    *foo = 7;
+    test_context->shared = (void*)foo;
+}
+
+AFTER_ALL(test_context)
+{
+    free(test_context->shared);
+}
+
+TEST_CTX(with_a_context, test_context)
+{
+    int global_num = *(int*)test_context->shared;
+
+    EXPECT_EQ(14 + global_num, 21);
+}
+```
+
+### `GlobalContext`
+
+Attest passes a `GlobalContext` object to `BEFORE_ALL` and `AFTER_ALL` lifecycle function. This object has fields containing user custom data. User's responsibility to clean up data.
+
+**Fields:**
+|name    |Type    |Description                               |
+|--------|--------|------------------------------------------|
+|`all`   |`void*` |Data shared amongst all tests and lifecycle functions. The value is available for the entire program.|
+
+**Example:**
+```c
+#include "attest.h"
+
+BEFORE_ALL(test_context)
+{
+    int* foo = malloc(sizeof(int));
+    *foo = 7;
+    test_context->shared = (void*)foo;
+}
+```
 
 ### `BEFORE_ALL(test_context)`
 
 A lifecycle function that runs before all tests and lifecycle functions.
 
 **Parameters:**
-- `test_context`: Has type `TestContext` and allows sharing allocated data.
+- `test_context`: Has type `TestContext` and allows sharing custom data.
 
 **Example:**
 ```c
@@ -142,14 +163,12 @@ BEFORE_ALL(test_context)
 }
 ```
 
-
-
 ### `BEFORE_EACH(test_context)`
 
 A lifecycle function that runs before each test.
 
 **Parameters:**
-- `test_context`: Has type `TestContext` and allows sharing allocated data.
+- `test_context`: Has type `TestContext` and allows sharing custom data.
 
 **Example:**
 ```c
@@ -161,14 +180,12 @@ BEFORE_EACH(test_context)
 }
 ```
 
-
-
 ### `AFTER_EACH(test_context)`
 
 A lifecycle function that runs after each tests.
 
 **Parameters:**
-- `test_context`: Has type `TestContext` and allows sharing allocated data.
+- `test_context`: Has type `TestContext` and allows sharing custom data.
 
 **Example:**
 ```c
@@ -179,14 +196,12 @@ AFTER_EACH(test_context)
 }
 ```
 
-
-
 ### `AFTER_ALL(test_context)`
 
 A lifecycle function that runs after all tests and lifecycle functions.
 
 **Parameters:**
-- `test_context`: Has type `TestContext` and allows sharing allocated data.
+- `test_context`: Has type `TestContext` and allows sharing custom data.
 
 **Example:**
 ```c
@@ -196,22 +211,22 @@ AFTER_ALL(test_context)
 }
 ```
 
-
 ### `PARAM_TEST(name, case_type, case_name, (values), [options...])`
 
 **Parameters:**
 - `name`: Unique name for the parameterized test. No spaces or quotes.
-- `case_type`: case data type.
+- `case_type`: Case data type.
 - `case_name`: Name of case data.
-- `values`: a list of structures enclosed in parenthesis of type `{ char[ATTEST_CASE_NAME_SIZE] name; case_type data; }` where `name` is an optional name for the test case and `data` is the value to be passed to the test.
+- `values`: List of structures enclosed in parenthesis of type `{ char[ATTEST_CASE_NAME_SIZE] name; case_type data; }` where `name` is an optional name for the test case and `data` is the value to passed to the test.
 
 **Options:**
+Accepts all the options available to `TEST` this macro accepts:
 
 |Option              |Type                    |Description                 |
 |--------------------|------------------------|----------------------------|
 |`.before_all_cases` |`void(*)(ParamContext*)`|A test that runs before all cases.|
-|`.before_each_case` |`void(*)(ParamContext*)`|A test that runs before each case.|
 |`.after_all_cases`  |`void(*)(ParamContext*)`|A test that runs after all cases. |
+|`.before_each_case` |`void(*)(ParamContext*)`|A test that runs before each case.|
 |`.after_each_cases` |`void(*)(ParamContext*)`|A test that runs after each case.|
 
 **Example:**
@@ -228,36 +243,6 @@ PARAM_TEST(fruit_basket,
 ```
 
 
-
-### `ParamContext`
-
-Attest passes a `ParamContext` object to each test case of a parameterized tests and each parameterized lifecycle function.
-
-**Fields:**
-|name      |Type      |Description                                   |
-|----------|----------|----------------------------------------------|
-|`all`     |`void*`   |Data intended shared amongst all tests and lifecycle functions. Value available for entire program.|
-|`set`     |`void*`   |Data intended for entire parameterized test. Should be set by `.before_all_cases`.|
-|`self`    |`void*`  |Data intended for each case. Should be set by `.before_each_case`.|
-
-**Example:**
-```c
-#include "attest.h"
-
-PARAM_TEST_CTX(basket_case,
-    param_context,
-    int,
-    case_num,
-    int,
-    ({ 1, "one" } , { 2, "two" } , { 3, "three" }))
-{
-    int shared_num = *(int*)param_context->shared;
-    EXPECT_EQ(shared_num, case_num);
-}
-```
-
-
-
 ### `PARAM_TEST_CTX(name, param_contest, case_type, case_name, (values), [options...])`
 
 **Parameters:**
@@ -265,10 +250,10 @@ PARAM_TEST_CTX(basket_case,
 - `param_context`: Name of `ParamContext`.
 - `case_type`: case data type.
 - `case_name`: Name of case data.
-- `values`: a list of structures enclosed in parenthesis of type `{ char[ATTEST_CASE_NAME_SIZE] name; case_type data; }` where `name` is an optional name for the test case and `data` is the value to be passed to the test.
+- `values`: a list of structures enclosed in parenthesis of type `{ char[ATTEST_CASE_NAME_SIZE] name; case_type data; }` where `name` is an optional name for the test case and `data` is the value to passed to the test.
 
 **Options:**
-Accept all the options available to `PARAM_TEST`.
+Accepts all the options available to `PARAM_TEST` and `TEST`.
 
 **Example:**
 ```c
@@ -282,6 +267,32 @@ PARAM_TEST_CTX(basket_case,
 {
     int global_num = *(int*)context->shared;
     EXPECT_EQ(global_num, case_num);
+}
+```
+
+### `ParamContext`
+
+Attest passes a `ParamContext` object to each test case of a parameterized tests and each parameterized lifecycle function.
+
+**Fields:**
+|name      |Type      |Description                                   |
+|----------|----------|----------------------------------------------|
+|`all`     |`void*`   |Data intended shared amongst all tests and lifecycle functions. Value available for entire program.|
+|`set`     |`void*`   |Data intended for entire parameterized test. Set by `.before_all_cases`.|
+|`self`    |`void*`  |Data intended for each case. Set by `.before_each_case`.|
+
+**Example:**
+```c
+#include "attest.h"
+
+PARAM_TEST_CTX(basket_case,
+    param_context,
+    int,
+    case_num,
+    ({ 1, "one" } , { 2, "two" } , { 3, "three" }))
+{
+    int shared_num = *(int*)param_context->shared;
+    EXPECT_EQ(shared_num, case_num);
 }
 ```
 

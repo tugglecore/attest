@@ -137,13 +137,6 @@ typedef struct TestConfig {
 
 typedef struct
 {
-    char* title;
-    bool skip;
-    void* data;
-} TestCase;
-
-typedef struct
-{
     char* test_name;
     char* filename;
     int line;
@@ -326,7 +319,6 @@ void attester()
             cfg->after(&context);
         }
 
-        free(context.self);
 
         if (cfg->after_each_case) {
             cfg->after_each_case(&global_param_context);
@@ -335,8 +327,6 @@ void attester()
         if (attest_after_each_handler != NULL) {
             attest_after_each_handler(&context);
         }
-
-        free(context.each);
 
         statuses[test_attempt_count] = cfg->status;
         test_attempt_count++;
@@ -426,7 +416,7 @@ void run_parameterize_test(TestConfig* test_config)
     test_config->param_init();
 
     if (case_count == 0) {
-        fprintf(stderr, "%s[ATTEST ERROR] Pass values enclosed with parenthesis when using `PARAM_TEST` or `PARAM_TEST_CTX`.%s\n", RED, NORMAL);
+        fprintf(stderr, "%s[ATTEST ERROR] Pass values enclosed within parenthesis when using `PARAM_TEST` or `PARAM_TEST_CTX`.%s\n", RED, NORMAL);
         exit(1); // NOLINT
     }
 
@@ -755,7 +745,6 @@ int main(int argc, char* argv[])
             }
         }
 
-        // printf("What is tag: %s\n", test_config->tags[9]);
         if (test_config->param_test_runner) {
             run_parameterize_test(test_config);
         } else {
@@ -765,7 +754,6 @@ int main(int argc, char* argv[])
         }
 
         memset(failed_assertions_per_attempt, 0, sizeof failed_assertions_per_attempt);
-        // failed_verification_count = 0;
 
         total_tests++;
 

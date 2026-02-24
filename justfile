@@ -10,7 +10,7 @@ dev target *args:
     watchexec {{watchexec_options}} 'clear && just run {{target}} args'
 
 @run command *args:
-    clang -Wall -Wextra -fsanitize=address -std=c99 -I ./ -I demo_program example_{{command}}.c
+    clang -Wall -Wextra -fsanitize=address,undefined,leak -std=c99 example_{{command}}.c
     -./a.{{ext}} {{args}}
     rm ./a.{{ext}}
 
